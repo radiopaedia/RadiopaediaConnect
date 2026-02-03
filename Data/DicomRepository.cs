@@ -216,6 +216,45 @@ namespace RadiopaediaConnect.Data
                 "SELECT * FROM DraftCases WHERE Id = @Id", new { Id = caseId });
         }
 
+        /// <summary>
+        /// Get all cases for a specific user, ordered by creation date descending
+        /// </summary>
+        public async Task<IEnumerable<CaseListItemDto>> GetUserCasesAsync(string username)
+        {
+            using var conn = GetConnection();
+            var sql = @"
+                SELECT 
+                    Id, Title, Presentation, Age, Sex, Status, 
+                    CreatedAt, RadiopaediaCaseId, ErrorMessage
+                FROM DraftCases 
+                WHERE Username = @Username 
+                ORDER BY CreatedAt DESC";
+
+            return await conn.QueryAsync<CaseListItemDto>(sql, new { Username = username });
+        }
+
+        /// <summary>
+        /// Update the case status after processing
+        /// </summary>
+        public async Task UpdateCaseStatusAsync(Guid caseId, string status, string? radiopaediaCaseId = null, string? errorMessage = null)
+        {
+            using var conn = GetConnection();
+            var sql = @"
+                UPDATE DraftCases 
+                SET Status = @Status, 
+                    RadiopaediaCaseId = COALESCE(@RadiopaediaCaseId, RadiopaediaCaseId),
+                    ErrorMessage = @ErrorMessage
+                WHERE Id = @Id";
+
+            await conn.ExecuteAsync(sql, new
+            {
+                Id = caseId,
+                Status = status,
+                RadiopaediaCaseId = radiopaediaCaseId,
+                ErrorMessage = errorMessage
+            });
+        }
+
         public async Task<Guid> EnqueueJobAsync(DicomJob job)
         {
             var sql = @"

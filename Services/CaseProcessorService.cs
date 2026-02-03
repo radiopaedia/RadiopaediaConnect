@@ -126,65 +126,86 @@ namespace RadiopaediaConnect.Services
         {
             _logger.LogInformation($"[PIPELINE] Processing Case {caseId}");
 
-            var fullCase = await _repository.GetFullDraftCaseAsync(caseId);
-            if (fullCase == null) throw new Exception($"DraftCase {caseId} not found in database.");
+            // Update status to Processing
+            await _repository.UpdateCaseStatusAsync(caseId, "Processing");
 
-            var draftEntity = await _repository.GetDraftCaseAsync(caseId);
-            string username = draftEntity?.Username ?? "unknown_user";
+            string? rCaseId = null;
 
-            // 1. Create Case
-            string rCaseId = await _apiClient.CreateCaseAsync(draftEntity, username);
-            _logger.LogInformation($"[PIPELINE] Case Created! Radiopaedia ID: {rCaseId}");
-
-            foreach (var study in fullCase.Studies)
+            try
             {
-                // 2. Create Study
-                // Determine modality from study, or fallback to first series
-                string rawModality = study.Series[0].Modality;                                    
+                var fullCase = await _repository.GetFullDraftCaseAsync(caseId);
+                if (fullCase == null) throw new Exception($"DraftCase {caseId} not found in database.");
 
-                string radiopaediaModality = MapToRadiopaediaModality(rawModality);
-                _logger.LogInformation($"[PIPELINE] Processing Study: {study.StudyInstanceUid} -> {radiopaediaModality}");
+                var draftEntity = await _repository.GetDraftCaseAsync(caseId);
+                string username = draftEntity?.Username ?? "unknown_user";
 
-                var studyPayload = new SubmitCaseStudyDto
+                // 1. Create Case
+                rCaseId = await _apiClient.CreateCaseAsync(draftEntity, username);
+                _logger.LogInformation($"[PIPELINE] Case Created! Radiopaedia ID: {rCaseId}");
+
+                // Save Radiopaedia case ID immediately after creation
+                await _repository.UpdateCaseStatusAsync(caseId, "Processing", rCaseId);
+
+                foreach (var study in fullCase.Studies)
                 {
-                    Modality = radiopaediaModality,
-                    Findings = study.Findings // Use study-level findings
-                };
+                    // 2. Create Study
+                    string rawModality = study.Series[0].Modality;
+                    string radiopaediaModality = MapToRadiopaediaModality(rawModality);
+                    _logger.LogInformation($"[PIPELINE] Processing Study: {study.StudyInstanceUid} -> {radiopaediaModality}");
 
-                string rStudyId = await _apiClient.CreateStudyAsync(rCaseId, studyPayload, username);
-                _logger.LogInformation($"[PIPELINE] Study Created! Radiopaedia ID: {rStudyId}");
-
-                foreach (var series in study.Series)
-                {
-                    // 3. Process & Upload Series
-                    _logger.LogInformation($"[PIPELINE] Processing Series: {series.SeriesInstanceUid}");
-
-                    string processedFolder = await PrepareSeriesAsync(study.StudyInstanceUid, series, study.RemoteNodeName);
-
-                    if (Directory.GetFiles(processedFolder, "*.png").Length > 0)
+                    var studyPayload = new SubmitCaseStudyDto
                     {
-                        string zipPath = Path.Combine(_repository.GetProcessingRoot(), $"{series.SeriesInstanceUid}.zip");
-                        if (File.Exists(zipPath)) File.Delete(zipPath);
+                        Modality = radiopaediaModality,
+                        Findings = study.Findings
+                    };
 
-                        ZipFile.CreateFromDirectory(processedFolder, zipPath, CompressionLevel.Fastest, false);
-                        
-                        _logger.LogInformation($"[PIPELINE] Uploading Series {series.SeriesInstanceUid} to Study {rStudyId}");
-                        await _apiClient.UploadStudyZipAsync(rCaseId, rStudyId, zipPath, username);
+                    string rStudyId = await _apiClient.CreateStudyAsync(rCaseId, studyPayload, username);
+                    _logger.LogInformation($"[PIPELINE] Study Created! Radiopaedia ID: {rStudyId}");
 
-                        if (File.Exists(zipPath)) File.Delete(zipPath);
-                    }
-                    else
+                    foreach (var series in study.Series)
                     {
-                        _logger.LogWarning($"[PIPELINE] No PNGs generated for {series.SeriesInstanceUid}");
-                    }
+                        // 3. Process & Upload Series
+                        _logger.LogInformation($"[PIPELINE] Processing Series: {series.SeriesInstanceUid}");
 
-                    if (Directory.Exists(processedFolder)) Directory.Delete(processedFolder, true);
+                        string processedFolder = await PrepareSeriesAsync(study.StudyInstanceUid, series, study.RemoteNodeName);
+
+                        if (Directory.GetFiles(processedFolder, "*.png").Length > 0)
+                        {
+                            string zipPath = Path.Combine(_repository.GetProcessingRoot(), $"{series.SeriesInstanceUid}.zip");
+                            if (File.Exists(zipPath)) File.Delete(zipPath);
+
+                            ZipFile.CreateFromDirectory(processedFolder, zipPath, CompressionLevel.Fastest, false);
+
+                            _logger.LogInformation($"[PIPELINE] Uploading Series {series.SeriesInstanceUid} to Study {rStudyId}");
+                            await _apiClient.UploadStudyZipAsync(rCaseId, rStudyId, zipPath, username);
+
+                            if (File.Exists(zipPath)) File.Delete(zipPath);
+                        }
+                        else
+                        {
+                            _logger.LogWarning($"[PIPELINE] No PNGs generated for {series.SeriesInstanceUid}");
+                        }
+
+                        if (Directory.Exists(processedFolder)) Directory.Delete(processedFolder, true);
+                    }
                 }
+
+                await _apiClient.MarkUploadFinishedAsync(rCaseId, username);
+
+                // Update status to Completed with Radiopaedia case ID
+                await _repository.UpdateCaseStatusAsync(caseId, "Completed", rCaseId);
+
+                _logger.LogInformation($"[PIPELINE] SUCCESS! Case {rCaseId} completed.");
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"[PIPELINE] FAILED! Case {caseId} error: {ex.Message}");
 
-            await _apiClient.MarkUploadFinishedAsync(rCaseId, username);
+                // Update status to Failed with error message, preserve any existing Radiopaedia ID
+                await _repository.UpdateCaseStatusAsync(caseId, "Failed", rCaseId, ex.Message);
 
-            _logger.LogInformation($"[PIPELINE] SUCCESS! Case {rCaseId} completed.");
+                throw;
+            }
         }
 
         private string MapToRadiopaediaModality(string dicomModality)

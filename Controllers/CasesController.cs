@@ -21,7 +21,30 @@ namespace RadiopaediaConnect.Controllers
             _caseProcessor = caseProcessor;
         }
 
-        
+        /// <summary>
+        /// Get all cases for the authenticated user
+        /// </summary>
+        [HttpGet("my-cases")]
+        public async Task<IActionResult> GetMyCases()
+        {
+            var username = User.FindFirst("urn:radiopaedia:username")?.Value;
+
+            if (string.IsNullOrEmpty(username))
+            {
+                return Unauthorized("User session invalid. Please log in again.");
+            }
+
+            try
+            {
+                var cases = await _repository.GetUserCasesAsync(username);
+                return Ok(cases);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve cases for user {Username}", username);
+                return StatusCode(500, "Failed to retrieve cases.");
+            }
+        }
 
         [HttpPost("submit")]
         public async Task<IActionResult> SubmitCase([FromBody] SubmitCaseDto request)

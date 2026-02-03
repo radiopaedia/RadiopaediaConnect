@@ -94,6 +94,8 @@ namespace RadiopaediaConnect.Data
             EnsureColumnExists(conn, "DicomJobs", "RemoteAeTitle", "TEXT");
             EnsureColumnExists(conn, "DicomJobs", "ResourceId", "TEXT");
             EnsureColumnExists(conn, "DraftCases", "Username", "TEXT DEFAULT 'Unknown'");
+            EnsureColumnExists(conn, "DraftCases", "RadiopaediaCaseId", "TEXT");
+            EnsureColumnExists(conn, "DraftCases", "ErrorMessage", "TEXT");
         }
 
         private static void EnsureColumnExists(SqliteConnection conn, string tableName, string columnName, string columnDef)

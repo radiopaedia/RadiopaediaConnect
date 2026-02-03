@@ -81,5 +81,23 @@ namespace RadiopaediaConnect.Models
         public string CaseDiscussion { get; set; }
         public DateTime CreatedAt { get; set; }
         public string Status { get; set; }
+        public string? RadiopaediaCaseId { get; set; }
+        public string? ErrorMessage { get; set; }
+    }
+
+    /// <summary>
+    /// DTO for returning case information to the frontend
+    /// </summary>
+    public class CaseListItemDto
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Presentation { get; set; } = string.Empty;
+        public string Age { get; set; } = string.Empty;
+        public string Sex { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public DateTime CreatedAt { get; set; }
+        public string? RadiopaediaCaseId { get; set; }
+        public string? ErrorMessage { get; set; }
     }
 }
