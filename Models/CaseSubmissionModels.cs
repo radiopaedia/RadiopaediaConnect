@@ -86,7 +86,7 @@ namespace RadiopaediaConnect.Models
     }
 
     /// <summary>
-    /// DTO for returning case information to the frontend
+    /// DTO for returning case information to the frontend list view
     /// </summary>
     public class CaseListItemDto
     {
@@ -100,4 +100,57 @@ namespace RadiopaediaConnect.Models
         public string? RadiopaediaCaseId { get; set; }
         public string? ErrorMessage { get; set; }
     }
+
+    #region Case Detail DTOs
+
+    /// <summary>
+    /// DTO for detailed case view including studies and series
+    /// </summary>
+    public class CaseDetailDto
+    {
+        public Guid Id { get; set; }
+        public string? Title { get; set; }
+        public string? Presentation { get; set; }
+        public int System { get; set; }
+        public string? Age { get; set; }
+        public string? Sex { get; set; }
+        public int DiagnosticCertainty { get; set; }
+        public string? CaseDiscussion { get; set; }
+        public string? Status { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public string? RadiopaediaCaseId { get; set; }
+        public string? ErrorMessage { get; set; }
+        public List<CaseDetailStudyDto> Studies { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Study information within a case detail view
+    /// </summary>
+    public class CaseDetailStudyDto
+    {
+        public long Id { get; set; }
+        public string StudyInstanceUid { get; set; } = string.Empty;
+        public string? RemoteNodeName { get; set; }
+        public string? Modality { get; set; }
+        public string? Findings { get; set; }
+        public List<CaseDetailSeriesDto> Series { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Series information within a study detail view
+    /// </summary>
+    public class CaseDetailSeriesDto
+    {
+        public long Id { get; set; }
+        public string SeriesInstanceUid { get; set; } = string.Empty;
+        public string? SeriesDescription { get; set; }
+        public string? Modality { get; set; }
+        public int StartFrame { get; set; }
+        public int EndFrame { get; set; }
+        public int StepFrame { get; set; }
+        public int SelectedFrameCount { get; set; }
+        public int RedactionCount { get; set; }
+    }
+
+    #endregion
 }

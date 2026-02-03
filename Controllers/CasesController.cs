@@ -46,6 +46,37 @@ namespace RadiopaediaConnect.Controllers
             }
         }
 
+        /// <summary>
+        /// Get detailed case information including studies and series
+        /// </summary>
+        [HttpGet("{caseId:guid}")]
+        public async Task<IActionResult> GetCaseDetail(Guid caseId)
+        {
+            var username = User.FindFirst("urn:radiopaedia:username")?.Value;
+
+            if (string.IsNullOrEmpty(username))
+            {
+                return Unauthorized("User session invalid. Please log in again.");
+            }
+
+            try
+            {
+                var caseDetail = await _repository.GetCaseDetailAsync(caseId, username);
+
+                if (caseDetail == null)
+                {
+                    return NotFound("Case not found.");
+                }
+
+                return Ok(caseDetail);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve case detail for {CaseId}", caseId);
+                return StatusCode(500, "Failed to retrieve case details.");
+            }
+        }
+
         [HttpPost("submit")]
         public async Task<IActionResult> SubmitCase([FromBody] SubmitCaseDto request)
         {

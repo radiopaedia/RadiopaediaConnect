@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
+import { Transition } from '@headlessui/react';
 import MainLayout from './MainLayout';
 import LoginPage from './LoginPage';
 
@@ -41,6 +42,321 @@ const STATUS_CONFIG = {
     }
 };
 
+// System ID to name mapping (reverse of what's in DashboardPage)
+const SYSTEM_MAP = {
+    1: "Breast", 2: "Vascular", 3: "Central Nervous System", 4: "Chest",
+    6: "Gastrointestinal", 7: "Head & Neck", 8: "Hepatobiliary", 9: "Musculoskeletal",
+    11: "Urogenital", 12: "Paediatrics", 15: "Spine", 16: "Cardiac",
+    17: "Interventional", 18: "Obstetrics", 19: "Gynaecology", 20: "Haematology",
+    21: "Forensic", 22: "Oncology", 23: "Trauma", 24: "Not Applicable"
+};
+
+const DIAGNOSTIC_CERTAINTY_MAP = {
+    1: "Possible", 2: "Probable", 3: "Almost Certain", 4: "Certain", 5: "Not applicable"
+};
+
+// Case Detail Drawer Component
+const CaseDetailDrawer = ({ isOpen, onClose, caseId }) => {
+    const [caseDetail, setCaseDetail] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        if (isOpen && caseId) {
+            fetchCaseDetail();
+        } else {
+            setCaseDetail(null);
+            setError(null);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, caseId]);
+
+    const fetchCaseDetail = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const response = await fetch(`/api/cases/${caseId}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch case details');
+            }
+            const data = await response.json();
+            setCaseDetail(data);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const formatDate = (dateString) => {
+        if (!dateString) return '';
+        return new Date(dateString).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    };
+
+    const getStatusConfig = (status) => {
+        return STATUS_CONFIG[status] || STATUS_CONFIG['Queued'];
+    };
+
+    return (
+        <Transition show={isOpen} as={Fragment}>
+            <div className="fixed inset-0 z-50 overflow-hidden">
+                {/* Backdrop */}
+                <Transition.Child
+                    as={Fragment}
+                    enter="ease-out duration-300"
+                    enterFrom="opacity-0"
+                    enterTo="opacity-100"
+                    leave="ease-in duration-200"
+                    leaveFrom="opacity-100"
+                    leaveTo="opacity-0"
+                >
+                    <div
+                        className="absolute inset-0 bg-black/50 transition-opacity"
+                        onClick={onClose}
+                    />
+                </Transition.Child>
+
+                {/* Drawer Panel */}
+                <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
+                    <Transition.Child
+                        as={Fragment}
+                        enter="transform transition ease-in-out duration-300"
+                        enterFrom="translate-x-full"
+                        enterTo="translate-x-0"
+                        leave="transform transition ease-in-out duration-200"
+                        leaveFrom="translate-x-0"
+                        leaveTo="translate-x-full"
+                    >
+                        <div className="w-screen max-w-xl">
+                            <div className="flex h-full flex-col bg-white dark:bg-slate-800 shadow-xl">
+                                {/* Header */}
+                                <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50">
+                                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                                        Case Details
+                                    </h2>
+                                    <button
+                                        onClick={onClose}
+                                        className="rounded-md p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                    >
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                </div>
+
+                                {/* Content */}
+                                <div className="flex-1 overflow-y-auto p-6">
+                                    {loading && (
+                                        <div className="flex flex-col items-center justify-center h-64">
+                                            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-4"></div>
+                                            <p className="text-slate-500">Loading case details...</p>
+                                        </div>
+                                    )}
+
+                                    {error && (
+                                        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                                            <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
+                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                <span>{error}</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {caseDetail && !loading && (
+                                        <div className="space-y-6">
+                                            {/* Case Info Section */}
+                                            <div className="bg-slate-50 dark:bg-slate-900/30 rounded-lg p-4">
+                                                <div className="flex items-start justify-between mb-3">
+                                                    <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                                                        {caseDetail.title || 'Untitled Case'}
+                                                    </h3>
+                                                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${getStatusConfig(caseDetail.status).color}`}>
+                                                        {getStatusConfig(caseDetail.status).icon}
+                                                        {getStatusConfig(caseDetail.status).label}
+                                                    </span>
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                                    <div>
+                                                        <span className="text-slate-500 dark:text-slate-400">Age:</span>
+                                                        <span className="ml-2 text-slate-900 dark:text-white">{caseDetail.age || '\u2014'}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-slate-500 dark:text-slate-400">Sex:</span>
+                                                        <span className="ml-2 text-slate-900 dark:text-white capitalize">{caseDetail.sex || '\u2014'}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-slate-500 dark:text-slate-400">System:</span>
+                                                        <span className="ml-2 text-slate-900 dark:text-white">{SYSTEM_MAP[caseDetail.system] || '\u2014'}</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-slate-500 dark:text-slate-400">Certainty:</span>
+                                                        <span className="ml-2 text-slate-900 dark:text-white">{DIAGNOSTIC_CERTAINTY_MAP[caseDetail.diagnosticCertainty] || '\u2014'}</span>
+                                                    </div>
+                                                    <div className="col-span-2">
+                                                        <span className="text-slate-500 dark:text-slate-400">Created:</span>
+                                                        <span className="ml-2 text-slate-900 dark:text-white">{formatDate(caseDetail.createdAt)}</span>
+                                                    </div>
+                                                    {caseDetail.radiopaediaCaseId && (
+                                                        <div className="col-span-2">
+                                                            <span className="text-slate-500 dark:text-slate-400">Radiopaedia ID:</span>
+                                                            <span className="ml-2 text-indigo-600 dark:text-indigo-400 font-mono">{caseDetail.radiopaediaCaseId}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {caseDetail.errorMessage && (
+                                                    <div className="mt-3 p-2 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800">
+                                                        <p className="text-xs text-red-600 dark:text-red-400">
+                                                            <span className="font-bold">Error:</span> {caseDetail.errorMessage}
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Presentation Section */}
+                                            {caseDetail.presentation && (
+                                                <div>
+                                                    <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide mb-2">
+                                                        Presentation
+                                                    </h4>
+                                                    <p className="text-sm text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900/50 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
+                                                        {caseDetail.presentation}
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {/* Case Discussion Section */}
+                                            {caseDetail.caseDiscussion && (
+                                                <div>
+                                                    <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide mb-2">
+                                                        Case Discussion
+                                                    </h4>
+                                                    <p className="text-sm text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900/50 rounded-lg p-3 border border-slate-200 dark:border-slate-700 whitespace-pre-wrap">
+                                                        {caseDetail.caseDiscussion}
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {/* Studies Section */}
+                                            <div>
+                                                <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide mb-3">
+                                                    Studies ({caseDetail.studies?.length || 0})
+                                                </h4>
+
+                                                {caseDetail.studies?.length === 0 && (
+                                                    <p className="text-sm text-slate-500 italic">No studies attached</p>
+                                                )}
+
+                                                <div className="space-y-4">
+                                                    {caseDetail.studies?.map((study, studyIndex) => (
+                                                        <div
+                                                            key={study.id || studyIndex}
+                                                            className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden"
+                                                        >
+                                                            {/* Study Header */}
+                                                            <div className="bg-slate-100 dark:bg-slate-900/50 px-4 py-2 border-b border-slate-200 dark:border-slate-700">
+                                                                <div className="flex items-center justify-between">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="px-2 py-0.5 text-xs font-bold rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300">
+                                                                            {study.modality || 'UNK'}
+                                                                        </span>
+                                                                        <span className="text-sm font-medium text-slate-900 dark:text-white">
+                                                                            Study {studyIndex + 1}
+                                                                        </span>
+                                                                    </div>
+                                                                    <span className="text-xs text-slate-500 font-mono truncate max-w-[150px]" title={study.studyInstanceUid}>
+                                                                        {study.studyInstanceUid?.substring(0, 20)}...
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Study Content */}
+                                                            <div className="p-4">
+                                                                {study.findings && (
+                                                                    <div className="mb-3">
+                                                                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Findings:</span>
+                                                                        <p className="text-sm text-slate-700 dark:text-slate-300 mt-1">
+                                                                            {study.findings}
+                                                                        </p>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Series List */}
+                                                                <div>
+                                                                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">
+                                                                        Series ({study.series?.length || 0}):
+                                                                    </span>
+
+                                                                    <div className="mt-2 space-y-2">
+                                                                        {study.series?.map((series, seriesIndex) => (
+                                                                            <div
+                                                                                key={series.id || seriesIndex}
+                                                                                className="bg-slate-50 dark:bg-slate-800 rounded p-3 text-sm"
+                                                                            >
+                                                                                <div className="flex items-start justify-between">
+                                                                                    <div className="flex-1 min-w-0">
+                                                                                        <div className="flex items-center gap-2">
+                                                                                            <span className="px-1.5 py-0.5 text-xs font-mono rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                                                                                                {series.modality || 'UNK'}
+                                                                                            </span>
+                                                                                            <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
+                                                                                                {series.seriesDescription || 'No Description'}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 font-mono truncate" title={series.seriesInstanceUid}>
+                                                                                            UID: {series.seriesInstanceUid?.substring(0, 30)}...
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </div>
+
+                                                                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                                                                    <span className="px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+                                                                                        Frames: {series.startFrame} - {series.endFrame}
+                                                                                    </span>
+                                                                                    {series.stepFrame > 1 && (
+                                                                                        <span className="px-2 py-1 rounded bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
+                                                                                            Step: {series.stepFrame}
+                                                                                        </span>
+                                                                                    )}
+                                                                                    <span className="px-2 py-1 rounded bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                                                                                        Selected: {series.selectedFrameCount} images
+                                                                                    </span>
+                                                                                    {series.redactionCount > 0 && (
+                                                                                        <span className="px-2 py-1 rounded bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300">
+                                                                                            {series.redactionCount} redaction{series.redactionCount !== 1 ? 's' : ''}
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </Transition.Child>
+                </div>
+            </div>
+        </Transition>
+    );
+};
+
 const MyCasesPage = () => {
     const [user, setUser] = useState(null);
     const [authLoading, setAuthLoading] = useState(true);
@@ -50,7 +366,11 @@ const MyCasesPage = () => {
 
     // Filter state
     const [searchQuery, setSearchQuery] = useState('');
-    const [statusFilter, setStatusFilter] = useState(null); // null = all, 'Completed', 'Pending', 'Failed'
+    const [statusFilter, setStatusFilter] = useState(null);
+
+    // Drawer state
+    const [drawerOpen, setDrawerOpen] = useState(false);
+    const [selectedCaseId, setSelectedCaseId] = useState(null);
 
     // Check authentication on mount
     useEffect(() => {
@@ -82,15 +402,13 @@ const MyCasesPage = () => {
     const pendingCount = cases.filter(c => c.status === 'Queued' || c.status === 'Processing').length;
     const failedCount = cases.filter(c => c.status === 'Failed').length;
 
-    // Filter cases based on search and status (must be before early returns)
+    // Filter cases based on search and status
     const filteredCases = useMemo(() => {
         return cases.filter(c => {
-            // Status filter
             if (statusFilter === 'Completed' && c.status !== 'Completed') return false;
             if (statusFilter === 'Pending' && c.status !== 'Queued' && c.status !== 'Processing') return false;
             if (statusFilter === 'Failed' && c.status !== 'Failed') return false;
 
-            // Search filter
             if (searchQuery.trim()) {
                 const query = searchQuery.toLowerCase();
                 const title = (c.title || '').toLowerCase();
@@ -163,6 +481,16 @@ const MyCasesPage = () => {
         setSearchQuery('');
     };
 
+    const handleOpenDetail = (caseId) => {
+        setSelectedCaseId(caseId);
+        setDrawerOpen(true);
+    };
+
+    const handleCloseDrawer = () => {
+        setDrawerOpen(false);
+        setSelectedCaseId(null);
+    };
+
     // Show loading while checking auth
     if (authLoading) {
         return (
@@ -230,8 +558,8 @@ const MyCasesPage = () => {
                         <button
                             onClick={clearFilters}
                             className={`bg-white dark:bg-slate-800 rounded-lg shadow border px-3 py-2 text-left transition-all hover:shadow-md flex items-center justify-between ${statusFilter === null
-                                    ? 'border-indigo-500 ring-2 ring-indigo-500/20'
-                                    : 'border-slate-200 dark:border-slate-700'
+                                ? 'border-indigo-500 ring-2 ring-indigo-500/20'
+                                : 'border-slate-200 dark:border-slate-700'
                                 }`}
                         >
                             <span className="text-xs text-slate-500 dark:text-slate-400">Total</span>
@@ -240,8 +568,8 @@ const MyCasesPage = () => {
                         <button
                             onClick={() => handleStatusFilterClick('Completed')}
                             className={`bg-white dark:bg-slate-800 rounded-lg shadow border px-3 py-2 text-left transition-all hover:shadow-md flex items-center justify-between ${statusFilter === 'Completed'
-                                    ? 'border-green-500 ring-2 ring-green-500/20'
-                                    : 'border-green-200 dark:border-green-800'
+                                ? 'border-green-500 ring-2 ring-green-500/20'
+                                : 'border-green-200 dark:border-green-800'
                                 }`}
                         >
                             <span className="flex items-center gap-1.5">
@@ -253,8 +581,8 @@ const MyCasesPage = () => {
                         <button
                             onClick={() => handleStatusFilterClick('Pending')}
                             className={`bg-white dark:bg-slate-800 rounded-lg shadow border px-3 py-2 text-left transition-all hover:shadow-md flex items-center justify-between ${statusFilter === 'Pending'
-                                    ? 'border-yellow-500 ring-2 ring-yellow-500/20'
-                                    : 'border-yellow-200 dark:border-yellow-800'
+                                ? 'border-yellow-500 ring-2 ring-yellow-500/20'
+                                : 'border-yellow-200 dark:border-yellow-800'
                                 }`}
                         >
                             <span className="flex items-center gap-1.5">
@@ -266,8 +594,8 @@ const MyCasesPage = () => {
                         <button
                             onClick={() => handleStatusFilterClick('Failed')}
                             className={`bg-white dark:bg-slate-800 rounded-lg shadow border px-3 py-2 text-left transition-all hover:shadow-md flex items-center justify-between ${statusFilter === 'Failed'
-                                    ? 'border-red-500 ring-2 ring-red-500/20'
-                                    : 'border-red-200 dark:border-red-800'
+                                ? 'border-red-500 ring-2 ring-red-500/20'
+                                : 'border-red-200 dark:border-red-800'
                                 }`}
                         >
                             <span className="flex items-center gap-1.5">
@@ -387,7 +715,7 @@ const MyCasesPage = () => {
                                             Created
                                         </th>
                                         <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                                            Link
+                                            Actions
                                         </th>
                                     </tr>
                                 </thead>
@@ -425,21 +753,30 @@ const MyCasesPage = () => {
                                                     {formatDate(caseItem.createdAt)}
                                                 </td>
                                                 <td className="px-6 py-4 whitespace-nowrap text-right">
-                                                    {hasRadiopaediaLink ? (
-                                                        <a
-                                                            href={getRadiopaediaUrl(caseItem.radiopaediaCaseId)}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        {hasRadiopaediaLink && (
+                                                            <a
+                                                                href={getRadiopaediaUrl(caseItem.radiopaediaCaseId)}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                                                            >
+                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                                </svg>
+                                                                View on Radiopaedia
+                                                            </a>
+                                                        )}
+                                                        <button
+                                                            onClick={() => handleOpenDetail(caseItem.id)}
+                                                            className="p-1.5 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                                            title="View case details"
                                                         >
-                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                                             </svg>
-                                                            View on Radiopaedia
-                                                        </a>
-                                                    ) : (
-                                                        <span className="text-xs text-slate-400">{'\u2014'}</span>
-                                                    )}
+                                                        </button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         );
@@ -450,6 +787,13 @@ const MyCasesPage = () => {
                     </div>
                 )}
             </div>
+
+            {/* Case Detail Drawer */}
+            <CaseDetailDrawer
+                isOpen={drawerOpen}
+                onClose={handleCloseDrawer}
+                caseId={selectedCaseId}
+            />
         </MainLayout>
     );
 };

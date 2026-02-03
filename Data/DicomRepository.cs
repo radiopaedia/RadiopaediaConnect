@@ -415,5 +415,95 @@ namespace RadiopaediaConnect.Data
                 Cancelled = JobStatus.Cancelled
             });
         }
+
+        /// <summary>
+        /// Gets the full case detail including studies and series for display.
+        /// Validates that the case belongs to the requesting user.
+        /// </summary>
+        public async Task<CaseDetailDto?> GetCaseDetailAsync(Guid caseId, string username)
+        {
+            using var conn = GetConnection();
+
+            // Get the main case record with username validation
+            var sqlCase = @"
+                SELECT Id, Title, Presentation, System, Age, Sex, DiagnosticCertainty, 
+                       CaseDiscussion, Status, CreatedAt, RadiopaediaCaseId, ErrorMessage
+                FROM DraftCases 
+                WHERE Id = @Id AND Username = @Username";
+
+            var draft = await conn.QueryFirstOrDefaultAsync<CaseDetailDto>(sqlCase, new { Id = caseId, Username = username });
+            if (draft == null) return null;
+
+            // Get studies for this case
+            var sqlStudies = @"
+                SELECT Id, StudyInstanceUid, RemoteNodeName, Modality, Findings
+                FROM DraftCaseStudies 
+                WHERE DraftCaseId = @CaseId";
+
+            var studies = await conn.QueryAsync(sqlStudies, new { CaseId = caseId });
+
+            foreach (var study in studies)
+            {
+                var studyDto = new CaseDetailStudyDto
+                {
+                    Id = (long)study.Id,
+                    StudyInstanceUid = study.StudyInstanceUid ?? string.Empty,
+                    RemoteNodeName = study.RemoteNodeName,
+                    Modality = study.Modality,
+                    Findings = study.Findings
+                };
+
+                // Get series for this study
+                var sqlSeries = @"
+                    SELECT Id, SeriesInstanceUid, SeriesDescription, Modality, 
+                           StartFrame, EndFrame, StepFrame, RedactionsJson
+                    FROM DraftCaseSeries 
+                    WHERE DraftCaseStudyId = @StudyId";
+
+                var seriesRecords = await conn.QueryAsync(sqlSeries, new { StudyId = studyDto.Id });
+
+                foreach (var series in seriesRecords)
+                {
+                    int start = (int)(series.StartFrame ?? 1);
+                    int end = (int)(series.EndFrame ?? 1);
+                    int step = (int)(series.StepFrame ?? 1);
+                    step = step < 1 ? 1 : step;
+
+                    int selectedCount = ((end - start) / step) + 1;
+
+                    int redactionCount = 0;
+                    string? redactionsJson = series.RedactionsJson;
+                    if (!string.IsNullOrEmpty(redactionsJson))
+                    {
+                        try
+                        {
+                            var redactions = JsonSerializer.Deserialize<List<RedactionZoneDto>>(redactionsJson);
+                            redactionCount = redactions?.Count ?? 0;
+                        }
+                        catch
+                        {
+                            // Ignore JSON parse errors
+                        }
+                    }
+
+                    studyDto.Series.Add(new CaseDetailSeriesDto
+                    {
+                        Id = (long)series.Id,
+                        SeriesInstanceUid = series.SeriesInstanceUid ?? string.Empty,
+                        SeriesDescription = series.SeriesDescription,
+                        Modality = series.Modality,
+                        StartFrame = start,
+                        EndFrame = end,
+                        StepFrame = step,
+                        SelectedFrameCount = selectedCount,
+                        RedactionCount = redactionCount
+                    });
+                }
+
+                draft.Studies.Add(studyDto);
+            }
+
+            return draft;
+        }
     }
 }
