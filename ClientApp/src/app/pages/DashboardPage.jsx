@@ -4,6 +4,8 @@ import PacsSearchForm from './components/PacsSearchForm';
 import CaseDetailsForm from './components/CaseDetailsForm';
 import SeriesPicker from './components/SeriesPicker';
 import StudyList from './components/StudyList';
+import CaseDetailDrawer from './CaseDetailDrawer';
+import DuplicatePatientWarningModal from './DuplicatePatientWarningModal';
 
 // --- Radiopaedia Constants ---
 const SYSTEM_MAP = {
@@ -51,6 +53,15 @@ const DashboardPage = ({ user, onLogout }) => {
     const [activeStudyUid, setActiveStudyUid] = useState(null);
     const [isLoadingSeries, setIsLoadingSeries] = useState(false);
     const [loadedSeriesData, setLoadedSeriesData] = useState({});
+
+    // --- Duplicate Patient Warning State ---
+    const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
+    const [existingPatientCases, setExistingPatientCases] = useState([]);
+    const [pendingPayload, setPendingPayload] = useState(null);
+
+    // --- Case Detail Drawer State ---
+    const [drawerOpen, setDrawerOpen] = useState(false);
+    const [selectedCaseId, setSelectedCaseId] = useState(null);
 
     // --- Drag & Drop State ---
     const dragItem = useRef();
@@ -330,13 +341,8 @@ const DashboardPage = ({ user, onLogout }) => {
         }
     };
 
-    // --- Submit Logic ---
-    const handleSubmit = async () => {
-        if (!validateForm()) {
-            alert("Please correct the errors in the Case Details section.");
-            return;
-        }
-
+    // --- Build Payload Helper ---
+    const buildSubmissionPayload = () => {
         // Iterate patientStudies to preserve the user-defined order
         const studiesPayload = patientStudies
             .filter(study => Object.keys(draftContent[study.studyInstanceUid]?.seriesSelection || {}).length > 0)
@@ -365,18 +371,17 @@ const DashboardPage = ({ user, onLogout }) => {
             });
 
         if (studiesPayload.length === 0) {
-            alert("Please select at least one series.");
-            return;
+            return null;
         }
 
         const systemId = SYSTEM_MAP[caseData.system];
         const certaintyId = Number(caseData.diagnostic_certainty);
 
         if (!systemId) {
-            alert("Invalid System selected."); return;
+            return null;
         }
 
-        const payload = {
+        return {
             title: caseData.title,
             presentation: caseData.presentation,
             age: caseData.age,
@@ -384,13 +389,15 @@ const DashboardPage = ({ user, onLogout }) => {
             body: caseDiscussion,
             system: systemId,
             diagnostic_certainty: certaintyId || 1,
-            // Patient demographics for My Cases display/search
             patientName: patientInfo?.name || '',
             patientId: patientInfo?.id || '',
             patientDob: patientInfo?.dob || null,
             studies: studiesPayload
         };
+    };
 
+    // --- Submit the payload to the server ---
+    const submitCaseToServer = async (payload) => {
         try {
             const res = await fetch('/api/cases/submit', {
                 method: 'POST',
@@ -400,7 +407,6 @@ const DashboardPage = ({ user, onLogout }) => {
 
             if (res.ok) {
                 const data = await res.json();
-                // Notify user momentarily, then full reset
                 alert(`Case Submitted Successfully! ID: ${data.caseId}`);
                 resetToSearch();
             } else {
@@ -410,6 +416,82 @@ const DashboardPage = ({ user, onLogout }) => {
         } catch (e) {
             console.error(e);
             alert("Network error submitting case.");
+        }
+    };
+
+    // --- Check for existing patient cases ---
+    const checkPatientDuplicates = async (patientId) => {
+        if (!patientId) return [];
+
+        try {
+            const res = await fetch(`/api/cases/check-patient/${encodeURIComponent(patientId)}`);
+            if (res.ok) {
+                const data = await res.json();
+                return data.cases || [];
+            }
+        } catch (e) {
+            console.error("Failed to check patient duplicates:", e);
+        }
+        return [];
+    };
+
+    // --- Submit Logic ---
+    const handleSubmit = async () => {
+        if (!validateForm()) {
+            alert("Please correct the errors in the Case Details section.");
+            return;
+        }
+
+        const payload = buildSubmissionPayload();
+
+        if (!payload) {
+            alert("Please select at least one series and ensure all required fields are filled.");
+            return;
+        }
+
+        // Check for existing cases with same patient ID
+        const existingCases = await checkPatientDuplicates(patientInfo?.id);
+
+        if (existingCases.length > 0) {
+            // Store the payload and show warning modal
+            setPendingPayload(payload);
+            setExistingPatientCases(existingCases);
+            setShowDuplicateWarning(true);
+        } else {
+            // No duplicates, proceed with submission
+            await submitCaseToServer(payload);
+        }
+    };
+
+    // --- Handle warning modal actions ---
+    const handleDuplicateWarningClose = () => {
+        setShowDuplicateWarning(false);
+        setPendingPayload(null);
+        setExistingPatientCases([]);
+    };
+
+    const handleDuplicateWarningContinue = async () => {
+        setShowDuplicateWarning(false);
+        if (pendingPayload) {
+            await submitCaseToServer(pendingPayload);
+        }
+        setPendingPayload(null);
+        setExistingPatientCases([]);
+    };
+
+    const handleViewExistingCase = (caseId) => {
+        // Hide the warning modal and show the case detail drawer
+        setShowDuplicateWarning(false);
+        setSelectedCaseId(caseId);
+        setDrawerOpen(true);
+    };
+
+    const handleDrawerClose = () => {
+        setDrawerOpen(false);
+        setSelectedCaseId(null);
+        // Re-show the warning modal if there's still a pending payload
+        if (pendingPayload && existingPatientCases.length > 0) {
+            setShowDuplicateWarning(true);
         }
     };
 
@@ -632,6 +714,25 @@ const DashboardPage = ({ user, onLogout }) => {
                     </div>
                 )}
             </div>
+
+            {/* Duplicate Patient Warning Modal */}
+            <DuplicatePatientWarningModal
+                isOpen={showDuplicateWarning}
+                onClose={handleDuplicateWarningClose}
+                onContinue={handleDuplicateWarningContinue}
+                onViewCase={handleViewExistingCase}
+                existingCases={existingPatientCases}
+                patientName={patientInfo?.name}
+                patientId={patientInfo?.id}
+            />
+
+            {/* Case Detail Drawer */}
+            <CaseDetailDrawer
+                isOpen={drawerOpen}
+                onClose={handleDrawerClose}
+                caseId={selectedCaseId}
+                zIndex={60}
+            />
         </MainLayout>
     );
 };

@@ -240,6 +240,28 @@ namespace RadiopaediaConnect.Data
         }
 
         /// <summary>
+        /// Get all cases for a specific patient by Patient ID, ordered by creation date descending.
+        /// Used to check for duplicate patient submissions.
+        /// </summary>
+        public async Task<IEnumerable<CaseListItemDto>> GetCasesByPatientIdAsync(string patientId)
+        {
+            if (string.IsNullOrWhiteSpace(patientId))
+                return Enumerable.Empty<CaseListItemDto>();
+
+            using var conn = GetConnection();
+            var sql = @"
+                SELECT 
+                    Id, Title, Presentation, Age, Sex, Status, 
+                    CreatedAt, RadiopaediaCaseId, ErrorMessage,
+                    PatientName, PatientId, PatientDob
+                FROM DraftCases 
+                WHERE PatientId = @PatientId 
+                ORDER BY CreatedAt DESC";
+
+            return await conn.QueryAsync<CaseListItemDto>(sql, new { PatientId = patientId });
+        }
+
+        /// <summary>
         /// Update the case status after processing
         /// </summary>
         public async Task UpdateCaseStatusAsync(Guid caseId, string status, string? radiopaediaCaseId = null, string? errorMessage = null)

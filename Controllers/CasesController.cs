@@ -77,6 +77,40 @@ namespace RadiopaediaConnect.Controllers
             }
         }
 
+        /// <summary>
+        /// Check if a patient already has existing cases in the system.
+        /// Returns list of cases for the given patient ID.
+        /// </summary>
+        [HttpGet("check-patient/{patientId}")]
+        public async Task<IActionResult> CheckPatientCases(string patientId)
+        {
+            if (string.IsNullOrEmpty(User.FindFirst("urn:radiopaedia:username")?.Value))
+            {
+                return Unauthorized("User session invalid. Please log in again.");
+            }
+
+            if (string.IsNullOrWhiteSpace(patientId))
+            {
+                return BadRequest("Patient ID is required.");
+            }
+
+            try
+            {
+                var cases = await _repository.GetCasesByPatientIdAsync(patientId);
+                return Ok(new
+                {
+                    patientId,
+                    caseCount = cases.Count(),
+                    cases = cases
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to check patient cases for {PatientId}", patientId);
+                return StatusCode(500, "Failed to check patient cases.");
+            }
+        }
+
         [HttpPost("submit")]
         public async Task<IActionResult> SubmitCase([FromBody] SubmitCaseDto request)
         {
