@@ -112,10 +112,12 @@ namespace RadiopaediaConnect.Data
                 var sqlCase = @"
                     INSERT INTO DraftCases (
                         Id, Username, Title, Presentation, System, Age, Sex, 
-                        DiagnosticCertainty, CaseDiscussion, CreatedAt, Status
+                        DiagnosticCertainty, CaseDiscussion, CreatedAt, Status,
+                        PatientName, PatientId, PatientDob
                     ) VALUES (
                         @Id, @Username, @Title, @Presentation, @System, @Age, @Sex, 
-                        @DiagnosticCertainty, @CaseDiscussion, @CreatedAt, @Status
+                        @DiagnosticCertainty, @CaseDiscussion, @CreatedAt, @Status,
+                        @PatientName, @PatientId, @PatientDob
                     )";
 
                 await conn.ExecuteAsync(sqlCase, new
@@ -130,7 +132,10 @@ namespace RadiopaediaConnect.Data
                     payload.DiagnosticCertainty,
                     payload.CaseDiscussion,
                     CreatedAt = DateTime.UtcNow,
-                    Status = "Queued"
+                    Status = "Queued",
+                    payload.PatientName,
+                    payload.PatientId,
+                    payload.PatientDob
                 }, trans);
 
                 foreach (var study in payload.Studies)
@@ -225,7 +230,8 @@ namespace RadiopaediaConnect.Data
             var sql = @"
                 SELECT 
                     Id, Title, Presentation, Age, Sex, Status, 
-                    CreatedAt, RadiopaediaCaseId, ErrorMessage
+                    CreatedAt, RadiopaediaCaseId, ErrorMessage,
+                    PatientName, PatientId, PatientDob
                 FROM DraftCases 
                 WHERE Username = @Username 
                 ORDER BY CreatedAt DESC";
@@ -427,7 +433,8 @@ namespace RadiopaediaConnect.Data
             // Get the main case record with username validation
             var sqlCase = @"
                 SELECT Id, Title, Presentation, System, Age, Sex, DiagnosticCertainty, 
-                       CaseDiscussion, Status, CreatedAt, RadiopaediaCaseId, ErrorMessage
+                       CaseDiscussion, Status, CreatedAt, RadiopaediaCaseId, ErrorMessage,
+                       PatientName, PatientId, PatientDob
                 FROM DraftCases 
                 WHERE Id = @Id AND Username = @Username";
 

@@ -13,6 +13,11 @@ namespace RadiopaediaConnect.Models
         public string Age { get; set; } = string.Empty;
         public string Sex { get; set; } = string.Empty;
 
+        // Patient demographics for display/search in My Cases
+        public string PatientName { get; set; } = string.Empty;
+        public string PatientId { get; set; } = string.Empty;
+        public DateTime? PatientDob { get; set; }
+
         [JsonPropertyName("body")]
         public string CaseDiscussion { get; set; } = string.Empty;
 
@@ -83,6 +88,11 @@ namespace RadiopaediaConnect.Models
         public string Status { get; set; }
         public string? RadiopaediaCaseId { get; set; }
         public string? ErrorMessage { get; set; }
+
+        // Patient demographics
+        public string? PatientName { get; set; }
+        public string? PatientId { get; set; }
+        public DateTime? PatientDob { get; set; }
     }
 
     /// <summary>
@@ -99,6 +109,11 @@ namespace RadiopaediaConnect.Models
         public DateTime CreatedAt { get; set; }
         public string? RadiopaediaCaseId { get; set; }
         public string? ErrorMessage { get; set; }
+
+        // Patient demographics for display/search
+        public string? PatientName { get; set; }
+        public string? PatientId { get; set; }
+        public DateTime? PatientDob { get; set; }
     }
 
     #region Case Detail DTOs
@@ -120,6 +135,12 @@ namespace RadiopaediaConnect.Models
         public DateTime CreatedAt { get; set; }
         public string? RadiopaediaCaseId { get; set; }
         public string? ErrorMessage { get; set; }
+
+        // Patient demographics
+        public string? PatientName { get; set; }
+        public string? PatientId { get; set; }
+        public DateTime? PatientDob { get; set; }
+
         public List<CaseDetailStudyDto> Studies { get; set; } = new();
     }
 

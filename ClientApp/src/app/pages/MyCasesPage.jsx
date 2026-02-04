@@ -61,6 +61,19 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
+    // Lock body scroll when drawer is open to prevent double scrollbars
+    useEffect(() => {
+        if (isOpen) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+
+        return () => {
+            document.body.style.overflow = '';
+        };
+    }, [isOpen]);
+
     useEffect(() => {
         if (isOpen && caseId) {
             fetchCaseDetail();
@@ -172,6 +185,30 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId }) => {
 
                                     {caseDetail && !loading && (
                                         <div className="space-y-6">
+                                            {/* Patient Info Section */}
+                                            {(caseDetail.patientName || caseDetail.patientId) && (
+                                                <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-4 border border-indigo-100 dark:border-indigo-800">
+                                                    <h4 className="text-sm font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wide mb-2">
+                                                        Patient Information
+                                                    </h4>
+                                                    <div className="text-sm">
+                                                        <div className="font-medium text-slate-900 dark:text-white">
+                                                            {caseDetail.patientName || '\u2014'}
+                                                        </div>
+                                                        <div className="text-slate-600 dark:text-slate-400 mt-1 flex flex-wrap gap-3">
+                                                            {caseDetail.patientId && (
+                                                                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600">
+                                                                    ID: {caseDetail.patientId}
+                                                                </span>
+                                                            )}
+                                                            {caseDetail.patientDob && (
+                                                                <span>DOB: {formatDate(caseDetail.patientDob)}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
                                             {/* Case Info Section */}
                                             <div className="bg-slate-50 dark:bg-slate-900/30 rounded-lg p-4">
                                                 <div className="flex items-start justify-between mb-3">
@@ -228,7 +265,7 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId }) => {
                                                     <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide mb-2">
                                                         Presentation
                                                     </h4>
-                                                    <p className="text-sm text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900/50 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
+                                                    <p className="text-sm text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900/50 rounded-lg p-3 border border-slate-200 dark:border-slate-700 whitespace-pre-wrap">
                                                         {caseDetail.presentation}
                                                     </p>
                                                 </div>
@@ -284,7 +321,7 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId }) => {
                                                                 {study.findings && (
                                                                     <div className="mb-3">
                                                                         <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Findings:</span>
-                                                                        <p className="text-sm text-slate-700 dark:text-slate-300 mt-1">
+                                                                        <p className="text-sm text-slate-700 dark:text-slate-300 mt-1 whitespace-pre-wrap">
                                                                             {study.findings}
                                                                         </p>
                                                                     </div>
@@ -412,7 +449,9 @@ const MyCasesPage = () => {
             if (searchQuery.trim()) {
                 const query = searchQuery.toLowerCase();
                 const title = (c.title || '').toLowerCase();
-                return title.includes(query);
+                const patientName = (c.patientName || '').toLowerCase();
+                const patientId = (c.patientId || '').toLowerCase();
+                return title.includes(query) || patientName.includes(query) || patientId.includes(query);
             }
 
             return true;
@@ -449,15 +488,12 @@ const MyCasesPage = () => {
         }
     };
 
-    const formatDate = (dateString) => {
+    const formatDate = (dateString, dateOnly = false) => {
         if (!dateString) return '';
-        return new Date(dateString).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+        const options = dateOnly
+            ? { year: 'numeric', month: 'short', day: 'numeric' }
+            : { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+        return new Date(dateString).toLocaleDateString('en-US', options);
     };
 
     const getStatusConfig = (status) => {
@@ -523,7 +559,7 @@ const MyCasesPage = () => {
                             </svg>
                             <input
                                 type="text"
-                                placeholder="Search by title..."
+                                placeholder="Search title, patient name, or ID..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                                 className="pl-9 pr-4 py-2 w-48 sm:w-64 border border-slate-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
@@ -706,6 +742,9 @@ const MyCasesPage = () => {
                                 <thead className="bg-slate-50 dark:bg-slate-900/50">
                                     <tr>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                                            Patient
+                                        </th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                                             Case
                                         </th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -726,6 +765,23 @@ const MyCasesPage = () => {
 
                                         return (
                                             <tr key={caseItem.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                                                <td className="px-6 py-4">
+                                                    <div>
+                                                        <div className="text-sm font-medium text-slate-900 dark:text-white">
+                                                            {caseItem.patientName || '\u2014'}
+                                                        </div>
+                                                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 space-x-2">
+                                                            {caseItem.patientId && (
+                                                                <span className="font-mono bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded">
+                                                                    {caseItem.patientId}
+                                                                </span>
+                                                            )}
+                                                            {caseItem.patientDob && (
+                                                                <span>DOB: {formatDate(caseItem.patientDob, true)}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </td>
                                                 <td className="px-6 py-4">
                                                     <div>
                                                         <div className="text-sm font-medium text-slate-900 dark:text-white">

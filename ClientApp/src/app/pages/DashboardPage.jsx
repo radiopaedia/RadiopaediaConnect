@@ -384,6 +384,10 @@ const DashboardPage = ({ user, onLogout }) => {
             body: caseDiscussion,
             system: systemId,
             diagnostic_certainty: certaintyId || 1,
+            // Patient demographics for My Cases display/search
+            patientName: patientInfo?.name || '',
+            patientId: patientInfo?.id || '',
+            patientDob: patientInfo?.dob || null,
             studies: studiesPayload
         };
 
