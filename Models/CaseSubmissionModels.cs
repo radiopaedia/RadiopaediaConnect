@@ -8,7 +8,8 @@ namespace RadiopaediaConnect.Models
         public string Presentation { get; set; } = string.Empty;
 
         public int System { get; set; }
-        public int DiagnosticCertainty { get; set; }
+        [JsonPropertyName("diagnostic_certainty")]
+        public int DiagnosticCertainty { get; set; }        
 
         public string Age { get; set; } = string.Empty;
         public string Sex { get; set; } = string.Empty;

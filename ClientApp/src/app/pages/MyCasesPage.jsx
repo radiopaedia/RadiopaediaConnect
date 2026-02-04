@@ -501,7 +501,7 @@ const MyCasesPage = () => {
     };
 
     const getRadiopaediaUrl = (caseId) => {
-        return `https://radiopaedia.org/cases/${caseId}/edit`;
+        return `https://radiopaedia.org/cases/${caseId}`;
     };
 
     const handleStatusFilterClick = (filter) => {

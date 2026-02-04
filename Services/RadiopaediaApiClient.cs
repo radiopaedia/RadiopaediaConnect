@@ -159,5 +159,49 @@ namespace RadiopaediaConnect.Services
                 _logger.LogInformation($"[API] Case {caseId} marked as 'Upload Finished'.");
             }
         }
+
+        /// <summary>
+        /// Gets the current user's draft case quota from Radiopaedia API
+        /// </summary>
+        public async Task<UserQuotaDto?> GetUserQuotaAsync(string username)
+        {
+            var token = await _authService.GetValidAccessTokenAsync(username);
+            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            _logger.LogInformation($"[API] Fetching user quota for {username}...");
+
+            var response = await _httpClient.GetAsync("users/current");
+            var respString = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError($"[API] Get User Quota Failed: {response.StatusCode} - {respString}");
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(respString);
+            var root = doc.RootElement;
+
+            // Parse the quotas object from the user response
+            if (root.TryGetProperty("quotas", out var quotas))
+            {
+                return new UserQuotaDto
+                {
+                    Current = quotas.TryGetProperty("draft_case_count", out var current) ? current.GetInt32() : 0,
+                    Maximum = quotas.TryGetProperty("allowed_draft_cases", out var maximum) ? maximum.GetInt32() : 0
+                };
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// DTO for user quota information
+    /// </summary>
+    public class UserQuotaDto
+    {
+        public int Current { get; set; }
+        public int Maximum { get; set; }
     }
 }
