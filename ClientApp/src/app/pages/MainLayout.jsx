@@ -112,7 +112,9 @@ const MainLayout = ({ children, user, onLogout }) => {
                                             {quotaLoading ? (
                                                 <span className="text-slate-400">Loading...</span>
                                             ) : quota ? (
-                                                <span>Draft Case Quota: <span className="font-medium text-slate-700 dark:text-slate-300">{quota.current}/{quota.maximum}</span></span>
+                                                    <span>Draft Case Quota: <span className="font-medium text-slate-700 dark:text-slate-300">
+                                                        {quota.current === 0 ? '\u221E' : quota.current}/{quota.maximum === 0 ? '\u221E' : quota.maximum}
+                                                    </span></span>
                                             ) : (
                                                 <span className="text-slate-400">{'\u2014'}</span>
                                             )}
