@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(npm uninstall:*)",
-      "Bash(del /f AnimatedTick.jsx ApplyWrapper.jsx Breadcrumbs.jsx CollapsibleSearch.jsx ConfirmModal.jsx ContextualHelp.jsx Delayed.jsx DropIndicator.jsx Highlight.jsx Loadable.jsx NProgress.jsx PreviewImg.jsx SidebarToggleBtn.jsx SyntaxHighlighter.jsx Tooltip.jsx)"
-    ]
-  }
-}
