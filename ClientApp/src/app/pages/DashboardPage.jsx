@@ -57,7 +57,7 @@ const DashboardPage = ({ user, onLogout }) => {
     // --- Duplicate Patient Warning State ---
     const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
     const [existingPatientCases, setExistingPatientCases] = useState([]);
-    const [pendingPayload, setPendingPayload] = useState(null);
+    const [pendingDraftStudy, setPendingDraftStudy] = useState(null);
 
     // --- Case Detail Drawer State ---
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -135,7 +135,12 @@ const DashboardPage = ({ user, onLogout }) => {
         setActiveStudyUid(null);
         setLoadedSeriesData({});
 
-        // 3. Navigate
+        // 3. Reset Duplicate Warning Context
+        setShowDuplicateWarning(false);
+        setExistingPatientCases([]);
+        setPendingDraftStudy(null);
+
+        // 4. Navigate
         setViewMode('search');
     };
 
@@ -172,9 +177,33 @@ const DashboardPage = ({ user, onLogout }) => {
 
         setIsInitializingDraft(true);
         try {
-            const primaryStudy = selectedSearchStudy;
+            // Check for existing cases with same patient ID before proceeding
+            const existingCases = await checkPatientDuplicates(selectedSearchStudy.patientId);
 
-            // 1. Fetch comprehensive patient history using Patient ID
+            if (existingCases.length > 0) {
+                // Store the selected study and show warning modal
+                setPendingDraftStudy(selectedSearchStudy);
+                setExistingPatientCases(existingCases);
+                setShowDuplicateWarning(true);
+                setIsInitializingDraft(false);
+                return;
+            }
+
+            // No duplicates found, proceed directly
+            await proceedWithDraftInit(selectedSearchStudy);
+        } catch (error) {
+            console.error(error);
+            alert("Error initializing case: " + error.message);
+            setIsInitializingDraft(false);
+        }
+    };
+
+    // Extracted draft initialization logic so it can be called from
+    // both the normal flow and the "Continue Anyway" modal action.
+    const proceedWithDraftInit = async (primaryStudy) => {
+        setIsInitializingDraft(true);
+        try {
+            // Fetch comprehensive patient history using Patient ID
             const criteria = {
                 patientId: primaryStudy.patientId,
                 remoteNodeName: primaryStudy.remoteNodeName,
@@ -199,7 +228,7 @@ const DashboardPage = ({ user, onLogout }) => {
             // Sort by date descending
             relatedStudies.sort((a, b) => new Date(b.studyDate) - new Date(a.studyDate));
 
-            // 2. Setup Patient Info
+            // Setup Patient Info
             let age = primaryStudy.patientAge || '';
             let sex = '';
             if (primaryStudy.patientSex === 'M') sex = 'male';
@@ -449,34 +478,23 @@ const DashboardPage = ({ user, onLogout }) => {
             return;
         }
 
-        // Check for existing cases with same patient ID
-        const existingCases = await checkPatientDuplicates(patientInfo?.id);
-
-        if (existingCases.length > 0) {
-            // Store the payload and show warning modal
-            setPendingPayload(payload);
-            setExistingPatientCases(existingCases);
-            setShowDuplicateWarning(true);
-        } else {
-            // No duplicates, proceed with submission
-            await submitCaseToServer(payload);
-        }
+        await submitCaseToServer(payload);
     };
 
     // --- Handle warning modal actions ---
     const handleDuplicateWarningClose = () => {
         setShowDuplicateWarning(false);
-        setPendingPayload(null);
+        setPendingDraftStudy(null);
         setExistingPatientCases([]);
     };
 
     const handleDuplicateWarningContinue = async () => {
         setShowDuplicateWarning(false);
-        if (pendingPayload) {
-            await submitCaseToServer(pendingPayload);
-        }
-        setPendingPayload(null);
         setExistingPatientCases([]);
+        if (pendingDraftStudy) {
+            await proceedWithDraftInit(pendingDraftStudy);
+        }
+        setPendingDraftStudy(null);
     };
 
     const handleViewExistingCase = (caseId) => {
@@ -489,8 +507,8 @@ const DashboardPage = ({ user, onLogout }) => {
     const handleDrawerClose = () => {
         setDrawerOpen(false);
         setSelectedCaseId(null);
-        // Re-show the warning modal if there's still a pending payload
-        if (pendingPayload && existingPatientCases.length > 0) {
+        // Re-show the warning modal if there is still a pending draft study
+        if (pendingDraftStudy && existingPatientCases.length > 0) {
             setShowDuplicateWarning(true);
         }
     };
@@ -722,8 +740,8 @@ const DashboardPage = ({ user, onLogout }) => {
                 onContinue={handleDuplicateWarningContinue}
                 onViewCase={handleViewExistingCase}
                 existingCases={existingPatientCases}
-                patientName={patientInfo?.name}
-                patientId={patientInfo?.id}
+                patientName={pendingDraftStudy?.patientName?.replace('^', ', ')}
+                patientId={pendingDraftStudy?.patientId}
             />
 
             {/* Case Detail Drawer */}

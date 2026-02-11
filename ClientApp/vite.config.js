@@ -5,7 +5,7 @@ import eslint from 'vite-plugin-eslint';
 import svgr from 'vite-plugin-svgr'
 import tailwindcss from "@tailwindcss/vite";
 import basicSsl from '@vitejs/plugin-basic-ssl';
-import path from 'path'; // [Added] Import path to help resolve directories
+import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -15,16 +15,26 @@ export default defineConfig({
         svgr(),
         eslint(),
         tailwindcss(),
-        basicSsl() 
+        basicSsl()
     ],
-    // [Added] Build configuration for ASP.NET Core integration
+    resolve: {
+        alias: {
+            // cornerstone-tools v3 is a legacy CJS package whose package.json
+            // does not declare proper main/module/exports fields for Vite 7.
+            // Point directly at the pre-built dist bundle to avoid resolution failures.
+            'cornerstone-tools': path.resolve(
+                __dirname,
+                'node_modules/cornerstone-tools/dist/cornerstoneTools.min.js'
+            ),
+        }
+    },
     build: {
-        outDir: '../wwwroot', // Output to project root/wwwroot
-        emptyOutDir: true,    // Clears the folder before building
-        sourcemap: true       // Optional: Helpful for debugging production builds
+        outDir: '../wwwroot',
+        emptyOutDir: true,
+        sourcemap: true
     },
     server: {
-        host: true, // Listen on all local IPs (0.0.0.0)
+        host: true,
         port: 5173,
         https: false,
         proxy: {
@@ -35,7 +45,7 @@ export default defineConfig({
             },
             '/signin-radiopaedia': {
                 target: 'http://localhost:5198',
-                changeOrigin: false, // [CRITICAL] Keep false so Backend sees 172.x.x.x Host header
+                changeOrigin: false, // Keep false so Backend sees 172.x.x.x Host header
                 secure: false,
             }
         }
