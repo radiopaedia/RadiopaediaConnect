@@ -151,6 +151,13 @@
   dependencies:
     "@babel/helper-plugin-utils" "^7.27.1"
 
+"@babel/runtime@7.1.2":
+  version "7.1.2"
+  resolved "https://registry.yarnpkg.com/@babel/runtime/-/runtime-7.1.2.tgz#81c89935f4647706fc54541145e6b4ecfef4b8e3"
+  integrity sha512-Y3SCjmhSupzFB6wcv1KmmFucH6gDVnI30WjOcicV10ju0cZjak3Jcs67YLIXBrmZYw1xCrVeJPbycFwrqNyxpg==
+  dependencies:
+    regenerator-runtime "^0.12.0"
+
 "@babel/runtime@^7.23.2", "@babel/runtime@^7.27.6", "@babel/runtime@^7.28.4":
   version "7.28.4"
   resolved "https://registry.npmjs.org/@babel/runtime/-/runtime-7.28.4.tgz"
@@ -1447,17 +1454,18 @@ cornerstone-core@^2.6.1:
   resolved "https://registry.npmjs.org/cornerstone-core/-/cornerstone-core-2.6.1.tgz"
   integrity sha512-LAXjXwNnK2W65ZxpE7phVLjbijkYUrAQIGv5xqKjK8+dmIGlBxqvPHnyGwEqVDyKOWVrpXP6ymUPwrGGRwzgMg==
 
-cornerstone-math@^0.1.10, cornerstone-math@^0.1.6:
+cornerstone-math@0.1.10, cornerstone-math@^0.1.10:
   version "0.1.10"
   resolved "https://registry.npmjs.org/cornerstone-math/-/cornerstone-math-0.1.10.tgz"
   integrity sha512-23XSAyP7t70ANvhFyqwvva+zFd1bQ2d5GL7tg9qKE932WmImjA2Y9tiy5n0iTtnf51W/78Png8Lia2o4dCdJaQ==
 
-cornerstone-tools@^2.6.0:
-  version "2.6.0"
-  resolved "https://registry.yarnpkg.com/cornerstone-tools/-/cornerstone-tools-2.6.0.tgz#381d74648d43390b78b6f7247940756d647ab01d"
-  integrity sha512-6B6MMiQgyPkNjKYHM5aRVmEIruUDm628b9j9tqRlI5P8dS8/kltY3UjUR50RW/PEY5W0IDD09pYNMTqP2oANtw==
+cornerstone-tools@^6.0.0:
+  version "6.0.10"
+  resolved "https://registry.yarnpkg.com/cornerstone-tools/-/cornerstone-tools-6.0.10.tgz#5ac252853c1fce3c9a2bbdd773d8f451f62e4f4f"
+  integrity sha512-FbqnuQPmGvwCV6jd4KQ5dQO8zBZH4RfpAPNLoJdcyXh5Cx8YSwB3v5w79z0LLy7GlHjb9lszphW18KMWwI1Z7Q==
   dependencies:
-    cornerstone-math "^0.1.6"
+    "@babel/runtime" "7.1.2"
+    cornerstone-math "0.1.10"
 
 cornerstone-wado-image-loader@^4.1.5:
   version "4.1.5"
@@ -3251,6 +3259,11 @@ refractor@^5.0.0:
     "@types/prismjs" "^1.0.0"
     hastscript "^9.0.0"
     parse-entities "^4.0.0"
+
+regenerator-runtime@^0.12.0:
+  version "0.12.1"
+  resolved "https://registry.yarnpkg.com/regenerator-runtime/-/regenerator-runtime-0.12.1.tgz#fa1a71544764c036f8c49b13a08b2594c9f8a0de"
+  integrity sha512-odxIc1/vDlo4iZcfXqRYFj0vpXFNoGdKMAUieAlFYO6m/nl5e9KR/beGf41z4a1FI+aQgtjhuaSlDxQ0hmkrHg==
 
 regexp.prototype.flags@^1.5.3, regexp.prototype.flags@^1.5.4:
   version "1.5.4"

@@ -6,6 +6,7 @@ import SeriesPicker from './components/SeriesPicker';
 import StudyList from './components/StudyList';
 import CaseDetailDrawer from './CaseDetailDrawer';
 import DuplicatePatientWarningModal from './DuplicatePatientWarningModal';
+import SubmissionSuccessModal from './SubmissionSuccessModal';
 
 // --- Radiopaedia Constants ---
 const SYSTEM_MAP = {
@@ -62,6 +63,10 @@ const DashboardPage = ({ user, onLogout }) => {
     // --- Case Detail Drawer State ---
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [selectedCaseId, setSelectedCaseId] = useState(null);
+
+    // --- Submission Success Modal State ---
+    const [showSuccessModal, setShowSuccessModal] = useState(false);
+    const [submittedCaseId, setSubmittedCaseId] = useState(null);
 
     // --- Drag & Drop State ---
     const dragItem = useRef();
@@ -436,8 +441,8 @@ const DashboardPage = ({ user, onLogout }) => {
 
             if (res.ok) {
                 const data = await res.json();
-                alert(`Case Submitted Successfully! ID: ${data.caseId}`);
-                resetToSearch();
+                setSubmittedCaseId(data.caseId);
+                setShowSuccessModal(true);
             } else {
                 const err = await res.text();
                 alert("Submission failed: " + err);
@@ -511,6 +516,30 @@ const DashboardPage = ({ user, onLogout }) => {
         if (pendingDraftStudy && existingPatientCases.length > 0) {
             setShowDuplicateWarning(true);
         }
+        // Re-show the success modal if there is a submitted case
+        if (submittedCaseId) {
+            setShowSuccessModal(true);
+        }
+    };
+
+    // --- Success Modal Actions ---
+    const handleSuccessGoToMyCases = () => {
+        setShowSuccessModal(false);
+        setSubmittedCaseId(null);
+        resetToSearch();
+        window.location.href = '/my-cases';
+    };
+
+    const handleSuccessAddNewCase = () => {
+        setShowSuccessModal(false);
+        setSubmittedCaseId(null);
+        resetToSearch();
+    };
+
+    const handleSuccessViewCase = (caseId) => {
+        setShowSuccessModal(false);
+        setSelectedCaseId(caseId);
+        setDrawerOpen(true);
     };
 
     const activeStudy = patientStudies.find(s => s.studyInstanceUid === activeStudyUid);
@@ -742,6 +771,15 @@ const DashboardPage = ({ user, onLogout }) => {
                 existingCases={existingPatientCases}
                 patientName={pendingDraftStudy?.patientName?.replace('^', ', ')}
                 patientId={pendingDraftStudy?.patientId}
+            />
+
+            {/* Submission Success Modal */}
+            <SubmissionSuccessModal
+                isOpen={showSuccessModal}
+                caseId={submittedCaseId}
+                onGoToMyCases={handleSuccessGoToMyCases}
+                onAddNewCase={handleSuccessAddNewCase}
+                onViewCase={handleSuccessViewCase}
             />
 
             {/* Case Detail Drawer */}
