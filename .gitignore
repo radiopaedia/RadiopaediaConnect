@@ -365,3 +365,6 @@ FodyWeavers.xsd
 /rconnect.tar
 
 .claude
+/radiopaedia-connect.tar
+/ClientApp/package-lock.json
+/ClientApp/yarn.lock
