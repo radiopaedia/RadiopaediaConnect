@@ -14,12 +14,6 @@ namespace RadiopaediaConnect.Extensions
     {
         public static IServiceCollection AddRadiopaediaAuthentication(this IServiceCollection services, IConfiguration config)
         {
-            services.AddHttpClient("Radiopaedia")
-                .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-                {
-                    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-                });
-
             services.AddAuthentication(options =>
             {
                 options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
@@ -34,18 +28,13 @@ namespace RadiopaediaConnect.Extensions
                 options.Cookie.Name = "RadiopaediaConnectSession";
                 options.Cookie.Path = "/";
             })
-            .AddScheme<OAuthOptions, RadiopaediaOAuthHandler>("Radiopaedia", "Radiopaedia", options =>
+            .AddOAuth("Radiopaedia", "Radiopaedia", options =>
             {
                 options.ClientId = config["Radiopaedia:ClientId"];
                 options.ClientSecret = config["Radiopaedia:ClientSecret"];
                 options.CallbackPath = "/signin-radiopaedia";
 
                 options.UsePkce = false;
-
-                options.CorrelationCookie.SameSite = SameSiteMode.Lax;
-                options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.None;
-                options.CorrelationCookie.IsEssential = true;
-                options.CorrelationCookie.Expiration = TimeSpan.FromMinutes(30);
 
                 options.AuthorizationEndpoint = "https://radiopaedia.org/oauth/authorize";
                 options.TokenEndpoint = "https://radiopaedia.org/oauth/token";
@@ -54,12 +43,24 @@ namespace RadiopaediaConnect.Extensions
                 options.SaveTokens = true;
                 options.ClaimsIssuer = "Radiopaedia";
 
+                // Correlation cookie settings for the state/CSRF round-trip
+                options.CorrelationCookie.SameSite = SameSiteMode.Lax;
+                options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.None;
+                options.CorrelationCookie.IsEssential = true;
+                options.CorrelationCookie.Expiration = TimeSpan.FromMinutes(30);
+
+                // Backchannel handler for token exchange and user info requests
+                options.BackchannelHttpHandler = new HttpClientHandler
+                {
+                    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                };
+
                 options.Events = new OAuthEvents
                 {
                     OnCreatingTicket = async context =>
                     {
                         var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
-                        logger.LogInformation($"[OAuth] Creating ticket - callback successful");
+                        logger.LogInformation("[OAuth] Creating ticket - callback successful");
 
                         var tokens = context.TokenResponse;
                         var request = new HttpRequestMessage(HttpMethod.Get, context.Options.UserInformationEndpoint);
