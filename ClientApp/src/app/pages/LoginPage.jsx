@@ -1,13 +1,13 @@
+import PropTypes from 'prop-types';
 import PurpleImg from '../Purple.jpg';
 
-const LoginPage = () => {
+const LoginPage = ({ hasTopBanner }) => {
     const handleLogin = () => {
-        // Redirect to the ASP.NET Core Backend to start the OAuth flow
-        window.location.href = "/api/auth/login";
+        window.location.href = '/api/auth/login';
     };
 
     return (
-        <div className="flex min-h-screen bg-white dark:bg-slate-900">
+        <div className={`flex min-h-screen bg-white dark:bg-slate-900 ${hasTopBanner ? 'pt-12' : ''}`}>
             {/* Left Side - Hero Image */}
             <div className="hidden lg:flex lg:w-1/2 relative bg-indigo-900">
                 <img
@@ -45,6 +45,10 @@ const LoginPage = () => {
             </div>
         </div>
     );
+};
+
+LoginPage.propTypes = {
+    hasTopBanner: PropTypes.bool,
 };
 
 export default LoginPage;

@@ -1,5 +1,4 @@
-﻿using Microsoft.Extensions.Options;
-using RadiopaediaConnect.Data;
+﻿using RadiopaediaConnect.Data;
 using RadiopaediaConnect.Models;
 using RadiopaediaConnect.Services.Dicom;
 using System.Runtime.InteropServices;
@@ -10,7 +9,7 @@ namespace RadiopaediaConnect.Services
     public class DicomQueueWorker : BackgroundService
     {
         private readonly IServiceScopeFactory _scopeFactory;
-        private readonly DicomSettings _settings;
+        private readonly SettingsService _settingsService;
         private readonly ILogger<DicomQueueWorker> _logger;
 
         private readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(2);
@@ -21,11 +20,11 @@ namespace RadiopaediaConnect.Services
 
         public DicomQueueWorker(
             IServiceScopeFactory scopeFactory,
-            IOptions<DicomSettings> settings,
+            SettingsService settingsService,
             ILogger<DicomQueueWorker> logger)
         {
             _scopeFactory = scopeFactory;
-            _settings = settings.Value;
+            _settingsService = settingsService;
             _logger = logger;
         }
 
@@ -46,9 +45,10 @@ namespace RadiopaediaConnect.Services
                     using (var scope = _scopeFactory.CreateScope())
                     {
                         var repository = scope.ServiceProvider.GetRequiredService<DicomRepository>();
+                        var settings = await _settingsService.GetDicomSettingsAsync();
 
                         int activeJobs = await repository.GetActiveJobCountAsync();
-                        if (activeJobs >= _settings.MaxConcurrentDownloads)
+                        if (activeJobs >= settings.MaxConcurrentDownloads)
                         {
                             await Task.Delay(_pollInterval, stoppingToken);
                             continue;
@@ -127,7 +127,8 @@ namespace RadiopaediaConnect.Services
             {
                 _logger.LogInformation($"[QueueWorker] Processing Retrieval {job.Id} (Study: {job.StudyInstanceUid})");
 
-                var remoteNode = _settings.RemoteNodes
+                var settings = await _settingsService.GetDicomSettingsAsync();
+                var remoteNode = settings.RemoteNodes
                     .FirstOrDefault(n => n.AeTitle.Equals(job.RemoteAeTitle, StringComparison.OrdinalIgnoreCase));
 
                 if (remoteNode == null) throw new Exception($"Configured Remote Node '{job.RemoteAeTitle}' not found.");

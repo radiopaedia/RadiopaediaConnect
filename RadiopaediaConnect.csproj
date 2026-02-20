@@ -24981,6 +24981,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.1.0" />
     <PackageReference Include="Dapper" Version="2.1.66" />
     <PackageReference Include="fo-dicom" Version="5.2.5" />
     <PackageReference Include="fo-dicom.Imaging.ImageSharp" Version="5.2.5" />

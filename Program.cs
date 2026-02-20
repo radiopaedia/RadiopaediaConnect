@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using RadiopaediaConnect.Data;
 using RadiopaediaConnect.Extensions;
-using RadiopaediaConnect.Models;
 using RadiopaediaConnect.Services;
 using RadiopaediaConnect.Services.Dicom;
 using System.Runtime.InteropServices;
@@ -32,10 +31,10 @@ namespace RadiopaediaConnect
                 .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataFolder, "keys")))
                 .SetApplicationName("RadiopaediaConnect");
 
-            var dbName = builder.Configuration["DatabaseName"] ?? "RadiopaediaConnect.db";
+            // Database name is hardcoded; no need to make it configurable
+            var dbName = "RadiopaediaConnect.db";
             var connectionString = $"Data Source={Path.Combine(dataFolder, dbName)};Cache=Shared";
 
-            builder.Configuration.AddJsonFile(Path.Combine(dataFolder, "appsettings.json"), optional: true, reloadOnChange: true);
             builder.Configuration["ConnectionStrings:DefaultConnection"] = connectionString;
 
             builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -52,12 +51,21 @@ namespace RadiopaediaConnect
 
             builder.Services.AddMemoryCache();
 
-            builder.Services.Configure<DicomSettings>(builder.Configuration.GetSection(DicomSettings.SectionName));
+            // Register repositories
             builder.Services.AddSingleton<UserRepository>();
             builder.Services.AddSingleton<DicomRepository>(sp => new DicomRepository(connectionString));
+            builder.Services.AddSingleton<SettingsRepository>(sp => new SettingsRepository(connectionString));
+
+            // Register SettingsService (singleton with caching)
+            builder.Services.AddSingleton<SettingsService>();
+
+            // Register DicomScpManager (replaces old DicomScp)
+            builder.Services.AddSingleton<DicomScpManager>();
+
             builder.Services.AddHttpClient<IOAuthService, OAuthService>();
 
-            builder.Services.AddRadiopaediaAuthentication(builder.Configuration);
+            // OAuth now reads credentials from DB via PostConfigure
+            builder.Services.AddRadiopaediaAuthentication();
 
             builder.Services.AddTransient<DicomScu>();
             builder.Services.AddScoped<CaseProcessorService>();
@@ -66,10 +74,28 @@ namespace RadiopaediaConnect
 
             var app = builder.Build();
 
-            var dicomScp = new DicomScp(app.Configuration, app.Services.GetRequiredService<DicomRepository>());
-            try { dicomScp.Start(); }
-            catch (Exception ex) { Console.WriteLine($"[CRITICAL] Could not start DICOM Server: {ex.Message}"); return; }
-            app.Lifetime.ApplicationStopping.Register(() => dicomScp.Stop());
+            // Initialize databases
+            DbInitializer.Initialize(connectionString);
+            DicomDbInitializer.Initialize(connectionString);
+            SettingsDbInitializer.Initialize(connectionString);
+
+            // Start the DICOM SCP
+            var scpManager = app.Services.GetRequiredService<DicomScpManager>();
+            try
+            {
+                // Load AE Title from settings DB (synchronous at startup)
+                var settingsRepo = app.Services.GetRequiredService<SettingsRepository>();
+                var localSettings = settingsRepo.GetLocalSettingsAsync().GetAwaiter().GetResult();
+                var aeTitle = localSettings.StorageScpAeTitle ?? "RCONNECT_SCP";
+
+                scpManager.Start(aeTitle);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CRITICAL] Could not start DICOM Server: {ex.Message}");
+                return;
+            }
+            app.Lifetime.ApplicationStopping.Register(() => scpManager.Stop());
 
             app.UseForwardedHeaders();
 
@@ -79,9 +105,6 @@ namespace RadiopaediaConnect
                 HttpOnly = Microsoft.AspNetCore.CookiePolicy.HttpOnlyPolicy.None,
                 Secure = CookieSecurePolicy.SameAsRequest
             });
-
-            RadiopaediaConnect.Data.DbInitializer.Initialize(connectionString);
-            RadiopaediaConnect.Data.DicomDbInitializer.Initialize(connectionString);
 
             if (!app.Environment.IsDevelopment()) app.UseHsts();
             else

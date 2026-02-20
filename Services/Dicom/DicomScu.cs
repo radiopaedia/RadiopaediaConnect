@@ -1,34 +1,38 @@
 ﻿using FellowOakDicom;
 using FellowOakDicom.Network;
 using FellowOakDicom.Network.Client;
-using Microsoft.Extensions.Options;
 using RadiopaediaConnect.Models;
+using RadiopaediaConnect.Services;
 
 namespace RadiopaediaConnect.Services.Dicom
 {
     public class DicomScu
     {
-        private readonly DicomSettings _settings;
+        private readonly SettingsService _settingsService;
         private readonly ILogger<DicomScu> _logger;
 
-        private readonly string[] _excludedModalities = 
+        private readonly string[] _excludedModalities =
         {
             "NULL", "",
             "DOC", "SC", "SR", "PR", "RTSTRUCT", "RTPLAN", "RTDOSE", "RTIMAGE"
         };
 
-        public DicomScu(IOptions<DicomSettings> settings, ILogger<DicomScu> logger)
+        public DicomScu(SettingsService settingsService, ILogger<DicomScu> logger)
         {
-            _settings = settings.Value;
+            _settingsService = settingsService;
             _logger = logger;
         }
+
+        private async Task<DicomSettings> GetSettingsAsync() =>
+            await _settingsService.GetDicomSettingsAsync();
 
         public async Task<List<DicomStudyDto>> FindStudiesAsync(DicomSearchCriteria criteria)
         {
             var results = new List<DicomStudyDto>();
             var nodeName = criteria.RemoteNodeName;
+            var settings = await GetSettingsAsync();
 
-            var remoteNode = _settings.RemoteNodes.FirstOrDefault(n => n.Name.Equals(nodeName, StringComparison.OrdinalIgnoreCase));
+            var remoteNode = settings.RemoteNodes.FirstOrDefault(n => n.Name.Equals(nodeName, StringComparison.OrdinalIgnoreCase));
             if (remoteNode == null)
             {
                 _logger.LogError($"Remote DICOM node '{nodeName}' not found.");
@@ -101,8 +105,9 @@ namespace RadiopaediaConnect.Services.Dicom
         public async Task<List<DicomSeriesDto>> FindSeriesAsync(string studyInstanceUid, string nodeName)
         {
             var results = new List<DicomSeriesDto>();
+            var settings = await GetSettingsAsync();
 
-            var remoteNode = _settings.RemoteNodes.FirstOrDefault(n => n.Name.Equals(nodeName, StringComparison.OrdinalIgnoreCase));
+            var remoteNode = settings.RemoteNodes.FirstOrDefault(n => n.Name.Equals(nodeName, StringComparison.OrdinalIgnoreCase));
             if (remoteNode == null) return results;
 
             var callingAe = remoteNode.CallingAe ?? "RCONNECT_SCU";
@@ -119,7 +124,6 @@ namespace RadiopaediaConnect.Services.Dicom
             {
                 if ((response.Status == DicomStatus.Success || response.Status == DicomStatus.Pending) && response.HasDataset)
                 {
-                    // [Updated] Pass nodeName to mapper
                     var result = MapToSeriesDto(response.Dataset, studyInstanceUid, nodeName);
                     if (!_excludedModalities.Contains(result.Modality))
                         results.Add(result);
@@ -237,7 +241,9 @@ namespace RadiopaediaConnect.Services.Dicom
 
         public async Task<bool> TriggerCMoveAsync(string studyInstanceUid, string seriesInstanceUid, string remoteNodeName)
         {
-            var remoteNode = _settings.RemoteNodes.FirstOrDefault(n => n.Name.Equals(remoteNodeName, StringComparison.OrdinalIgnoreCase));
+            var settings = await GetSettingsAsync();
+
+            var remoteNode = settings.RemoteNodes.FirstOrDefault(n => n.Name.Equals(remoteNodeName, StringComparison.OrdinalIgnoreCase));
             if (remoteNode == null)
             {
                 _logger.LogError($"[C-MOVE] Configuration for remote node '{remoteNodeName}' not found.");
@@ -245,7 +251,7 @@ namespace RadiopaediaConnect.Services.Dicom
             }
 
             var callingAe = remoteNode.CallingAe ?? "RCONNECT_SCU";
-            var destinationAe = _settings.Scp.AeTitle;
+            var destinationAe = settings.Scp.AeTitle;
 
             try
             {

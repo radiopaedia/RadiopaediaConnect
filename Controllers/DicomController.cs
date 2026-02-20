@@ -1,7 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 using RadiopaediaConnect.Data;
 using RadiopaediaConnect.Models;
+using RadiopaediaConnect.Services;
 using RadiopaediaConnect.Services.Dicom;
 
 namespace RadiopaediaConnect.Controllers
@@ -12,25 +12,26 @@ namespace RadiopaediaConnect.Controllers
     {
         private readonly DicomRepository _repository;
         private readonly DicomScu _dicomScu;
-        private readonly DicomSettings _settings;
+        private readonly SettingsService _settingsService;
         private readonly ILogger<DicomController> _logger;
 
         public DicomController(
             DicomRepository repository,
             DicomScu dicomScu,
-            IOptions<DicomSettings> settings,
+            SettingsService settingsService,
             ILogger<DicomController> logger)
         {
             _repository = repository;
             _dicomScu = dicomScu;
-            _settings = settings.Value;
+            _settingsService = settingsService;
             _logger = logger;
         }
 
         [HttpGet("nodes")]
-        public IActionResult GetNodes()
+        public async Task<IActionResult> GetNodes()
         {
-            var nodes = _settings.RemoteNodes.Select(n => new
+            var settings = await _settingsService.GetDicomSettingsAsync();
+            var nodes = settings.RemoteNodes.Select(n => new
             {
                 n.Name,
                 n.AeTitle,
@@ -43,9 +44,11 @@ namespace RadiopaediaConnect.Controllers
         [HttpPost("studies")]
         public async Task<IActionResult> SearchStudies([FromBody] DicomSearchCriteria criteria)
         {
+            var settings = await _settingsService.GetDicomSettingsAsync();
+
             if (string.IsNullOrEmpty(criteria.RemoteNodeName))
             {
-                var defaultNode = _settings.RemoteNodes.FirstOrDefault();
+                var defaultNode = settings.RemoteNodes.FirstOrDefault();
                 if (defaultNode == null) return BadRequest("No DICOM nodes configured.");
                 criteria.RemoteNodeName = defaultNode.Name;
             }
@@ -74,10 +77,12 @@ namespace RadiopaediaConnect.Controllers
             if (string.IsNullOrEmpty(request.StudyInstanceUid) || string.IsNullOrEmpty(request.SeriesInstanceUid))
                 return BadRequest("Study and Series UIDs are required for preview.");
 
+            var settings = await _settingsService.GetDicomSettingsAsync();
+
             var targetAeTitle = request.RemoteAeTitle;
             if (string.IsNullOrEmpty(targetAeTitle))
             {
-                var defaultNode = _settings.RemoteNodes.FirstOrDefault();
+                var defaultNode = settings.RemoteNodes.FirstOrDefault();
                 if (defaultNode == null) return StatusCode(500, "No Remote DICOM Nodes configured.");
                 targetAeTitle = defaultNode.AeTitle;
             }

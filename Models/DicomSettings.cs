@@ -2,7 +2,6 @@
 {
     public class DicomSettings
     {
-        public const string SectionName = "Dicom";
         public int MaxConcurrentDownloads { get; set; } = 5;
 
         public ScpSettings Scp { get; set; } = new();
@@ -13,7 +12,6 @@
     {
         public string AeTitle { get; set; } = "RCONNECT_SCP";
         public int Port { get; set; } = 104;
-        public string? StoragePath { get; set; }
     }
 
     public class RemoteNode

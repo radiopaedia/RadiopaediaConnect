@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Net.Http;
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using System.Text.Json;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Configuration;
 using RadiopaediaConnect.Data;
 
 namespace RadiopaediaConnect.Services
@@ -18,13 +13,13 @@ namespace RadiopaediaConnect.Services
     {
         private readonly HttpClient _httpClient;
         private readonly UserRepository _userRepo;
-        private readonly IConfiguration _config;
+        private readonly SettingsService _settingsService;
 
-        public OAuthService(HttpClient httpClient, UserRepository userRepo, IConfiguration config)
+        public OAuthService(HttpClient httpClient, UserRepository userRepo, SettingsService settingsService)
         {
             _httpClient = httpClient;
             _userRepo = userRepo;
-            _config = config;
+            _settingsService = settingsService;
         }
 
         public async Task<string> GetValidAccessTokenAsync(string username)
@@ -37,10 +32,12 @@ namespace RadiopaediaConnect.Services
                 return user.AccessToken;
             }
 
+            var (clientId, clientSecret) = await _settingsService.GetRadiopaediaCredentialsAsync();
+
             var formData = new Dictionary<string, string>
             {
-                { "client_id", _config["Radiopaedia:ClientId"] },
-                { "client_secret", _config["Radiopaedia:ClientSecret"] },
+                { "client_id", clientId ?? "" },
+                { "client_secret", clientSecret ?? "" },
                 { "grant_type", "refresh_token" },
                 { "refresh_token", user.RefreshToken }
             };

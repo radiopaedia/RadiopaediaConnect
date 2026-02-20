@@ -1,9 +1,9 @@
 ﻿using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OAuth;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using RadiopaediaConnect.Data;
+using RadiopaediaConnect.Services;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
@@ -12,8 +12,14 @@ namespace RadiopaediaConnect.Extensions
 {
     public static class AuthExtensions
     {
-        public static IServiceCollection AddRadiopaediaAuthentication(this IServiceCollection services, IConfiguration config)
+        public static IServiceCollection AddRadiopaediaAuthentication(this IServiceCollection services)
         {
+            services.AddHttpClient("Radiopaedia")
+                .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+                {
+                    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                });
+
             services.AddAuthentication(options =>
             {
                 options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
@@ -28,13 +34,19 @@ namespace RadiopaediaConnect.Extensions
                 options.Cookie.Name = "RadiopaediaConnectSession";
                 options.Cookie.Path = "/";
             })
-            .AddOAuth("Radiopaedia", "Radiopaedia", options =>
+            .AddScheme<OAuthOptions, RadiopaediaOAuthHandler>("Radiopaedia", "Radiopaedia", options =>
             {
-                options.ClientId = config["Radiopaedia:ClientId"];
-                options.ClientSecret = config["Radiopaedia:ClientSecret"];
+                // Credentials are populated at runtime by RadiopaediaOAuthPostConfigure
+                options.ClientId = "placeholder";
+                options.ClientSecret = "placeholder";
                 options.CallbackPath = "/signin-radiopaedia";
 
                 options.UsePkce = false;
+
+                options.CorrelationCookie.SameSite = SameSiteMode.Lax;
+                options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.None;
+                options.CorrelationCookie.IsEssential = true;
+                options.CorrelationCookie.Expiration = TimeSpan.FromMinutes(30);
 
                 options.AuthorizationEndpoint = "https://radiopaedia.org/oauth/authorize";
                 options.TokenEndpoint = "https://radiopaedia.org/oauth/token";
@@ -42,18 +54,6 @@ namespace RadiopaediaConnect.Extensions
 
                 options.SaveTokens = true;
                 options.ClaimsIssuer = "Radiopaedia";
-
-                // Correlation cookie settings for the state/CSRF round-trip
-                options.CorrelationCookie.SameSite = SameSiteMode.Lax;
-                options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.None;
-                options.CorrelationCookie.IsEssential = true;
-                options.CorrelationCookie.Expiration = TimeSpan.FromMinutes(30);
-
-                // Backchannel handler for token exchange and user info requests
-                options.BackchannelHttpHandler = new HttpClientHandler
-                {
-                    ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
-                };
 
                 options.Events = new OAuthEvents
                 {
@@ -96,7 +96,48 @@ namespace RadiopaediaConnect.Extensions
                 };
             });
 
+            // Register the PostConfigure handler that injects DB credentials at runtime
+            services.AddSingleton<IPostConfigureOptions<OAuthOptions>, RadiopaediaOAuthPostConfigure>();
+
             return services;
+        }
+    }
+
+    /// <summary>
+    /// Injects Radiopaedia OAuth credentials from the database into OAuthOptions
+    /// at runtime (each time the options are resolved). Uses the repository
+    /// directly with a synchronous Dapper call to avoid async-over-sync deadlocks.
+    /// </summary>
+    public class RadiopaediaOAuthPostConfigure : IPostConfigureOptions<OAuthOptions>
+    {
+        private readonly SettingsRepository _repository;
+        private readonly ILogger<RadiopaediaOAuthPostConfigure> _logger;
+
+        public RadiopaediaOAuthPostConfigure(SettingsRepository repository, ILogger<RadiopaediaOAuthPostConfigure> logger)
+        {
+            _repository = repository;
+            _logger = logger;
+        }
+
+        public void PostConfigure(string? name, OAuthOptions options)
+        {
+            if (name != "Radiopaedia") return;
+
+            try
+            {
+                // Synchronous Dapper call - safe in a non-async context
+                var settings = _repository.GetLocalSettings();
+
+                if (!string.IsNullOrEmpty(settings.RadiopaediaClientId))
+                    options.ClientId = settings.RadiopaediaClientId;
+
+                if (!string.IsNullOrEmpty(settings.RadiopaediaClientSecret))
+                    options.ClientSecret = settings.RadiopaediaClientSecret;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[OAuth] Could not load credentials from DB: {ex.Message}");
+            }
         }
     }
 }

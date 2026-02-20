@@ -1,10 +1,10 @@
-import { createBrowserRouter, Outlet } from "react-router";
-import HomePage from "app/index";
-import MainLayout from "app/pages/MainLayout";
+import { createBrowserRouter, Outlet } from 'react-router';
+import HomePage from 'app/index';
+import MainLayout from 'app/pages/MainLayout';
 
 const router = createBrowserRouter([
     {
-        path: "/",
+        path: '/',
         element: <Outlet />,
         children: [
             {
@@ -12,26 +12,38 @@ const router = createBrowserRouter([
                 element: <HomePage />,
             },
             {
-                path: "my-cases",
+                path: 'my-cases',
                 lazy: async () => ({
-                    Component: (await import("app/pages/MyCasesPage")).default,
+                    Component: (await import('app/pages/MyCasesPage')).default,
                 }),
             },
             {
-                path: "debug/cornerstone",
+                path: 'setup',
+                lazy: async () => ({
+                    Component: (await import('app/pages/SetupPage')).default,
+                }),
+            },
+            {
+                path: 'settings',
+                lazy: async () => ({
+                    Component: (await import('app/pages/SettingsPage')).default,
+                }),
+            },
+            {
+                path: 'debug/cornerstone',
                 element: (
-                    <MainLayout user={{ name: "Debug User" }}>
+                    <MainLayout user={{ name: 'Debug User' }}>
                         <Outlet />
                     </MainLayout>
                 ),
                 children: [
                     {
-                        path: "",
+                        path: '',
                         lazy: async () => ({
-                            Component: (await import("app/pages/debug/cornerstone/CornerstoneTestPage")).default,
+                            Component: (await import('app/pages/debug/cornerstone/CornerstoneTestPage')).default,
                         }),
-                    }
-                ]
+                    },
+                ],
             },
         ],
     },
