@@ -1,6 +1,5 @@
 import { createBrowserRouter, Outlet } from 'react-router';
 import HomePage from 'app/index';
-import MainLayout from 'app/pages/MainLayout';
 
 const router = createBrowserRouter([
     {
@@ -28,22 +27,6 @@ const router = createBrowserRouter([
                 lazy: async () => ({
                     Component: (await import('app/pages/SettingsPage')).default,
                 }),
-            },
-            {
-                path: 'debug/cornerstone',
-                element: (
-                    <MainLayout user={{ name: 'Debug User' }}>
-                        <Outlet />
-                    </MainLayout>
-                ),
-                children: [
-                    {
-                        path: '',
-                        lazy: async () => ({
-                            Component: (await import('app/pages/debug/cornerstone/CornerstoneTestPage')).default,
-                        }),
-                    },
-                ],
             },
         ],
     },
