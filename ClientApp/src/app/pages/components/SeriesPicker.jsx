@@ -10,7 +10,6 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
     // Local state for the viewer navigation
     const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
 
-    // --- Preview / Async State ---
     const [previewJob, setPreviewJob] = useState({
         status: 'idle',
         serverStatus: '',
@@ -21,6 +20,8 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
 
     // Redaction State
     const [isRedacting, setIsRedacting] = useState(false);
+    const [hasRedactionSelected, setHasRedactionSelected] = useState(false);
+    const [hasRedactions, setHasRedactions] = useState(false);
 
     // Holds the redactions to be drawn when the viewer first loads (restored from save)
     const [restoredRedactions, setRestoredRedactions] = useState([]);
@@ -30,19 +31,18 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
     const isDragging = useRef(null);
     const shouldAutoPreview = useRef(false);
 
-    // --- EFFECT: Handle Series Switching ---
     useEffect(() => {
         if (!activeSeries) return;
 
         let isMounted = true;
 
-        // 1. Reset the "Heavy" viewer state
         setPreviewJob({ status: 'idle', serverStatus: '', jobId: null, error: null });
         setPreviewImageIds([]);
         setIsRedacting(false);
+        setHasRedactionSelected(false);
+        setHasRedactions(false);
         setCurrentFrameIndex(0);
 
-        // 2. Restore Configuration (Subset & Redactions)
         const savedState = selectedSeriesMap[activeSeries.seriesInstanceUid];
 
         if (savedState) {
@@ -63,10 +63,8 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
             setRestoredRedactions([]);
         }
 
-        // 3. AUTO-CHECK or AUTO-PREVIEW
         const checkAvailability = async () => {
             if (shouldAutoPreview.current) {
-                // Active selection (click): Trigger preview generation
                 setPreviewJob({ status: 'loading', serverStatus: 'Requesting...', jobId: null, error: null });
                 try {
                     const response = await fetch('/api/dicom/preview', {
@@ -95,7 +93,6 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                     if (isMounted) setPreviewJob({ status: 'error', jobId: null, error: "Network Error: " + error });
                 }
             } else {
-                // Passive selection (checkbox): Only load if already cached
                 try {
                     const res = await fetch(`/api/cornerstone/series/${activeSeries.seriesInstanceUid}`);
                     if (res.ok && isMounted) {
@@ -115,7 +112,6 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeSeries]); // Dependency on activeSeries IDENTITY only
 
-    // --- EFFECT: Polling for Preview Status (Only when explicitly loading) ---
     useEffect(() => {
         let intervalId;
         if (previewJob.status === 'loading' && previewJob.jobId) {
@@ -149,8 +145,6 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         }
         return () => { if (intervalId) clearInterval(intervalId); };
     }, [previewJob.status, previewJob.jobId, activeSeries]);
-
-    // --- LOGIC: Separation of Concerns ---
 
     const handleSubsetSave = () => {
         if (!activeSeries) return;
@@ -193,6 +187,8 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                 );
             }
             setIsRedacting(false);
+            setHasRedactionSelected(false);
+            setHasRedactions(false);
         } else {
             setIsRedacting(true);
         }
@@ -420,6 +416,8 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                     onSliceChange={handleViewerSliceChange}
                                     sliceRange={{ start: sliceConfig.start - 1, end: sliceConfig.end - 1 }}
                                     redactions={restoredRedactions}
+                                    onSelectionChange={setHasRedactionSelected}
+                                    onRedactionsChange={setHasRedactions}
                                 />
                             ) : (
                                 <div className="text-center w-64">
@@ -459,8 +457,8 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
 
                         {/* 2. Timeline Controls */}
                         <div className="h-32 bg-slate-100 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 flex flex-col p-3 select-none">
-                            <div className="flex justify-between items-center mb-3">
-                                {/* Redaction Tool Bar */}
+                            <div className="flex items-center mb-3">
+                                {/* LEFT: Redaction Tool Bar */}
                                 <div className="flex items-center gap-2">
                                     {previewJob.status === 'ready' && (
                                         <div className="flex items-center bg-white dark:bg-slate-800 rounded border border-slate-300 dark:border-slate-600 p-0.5 shadow-sm">
@@ -478,15 +476,23 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                                     <div className="w-px h-4 bg-slate-300 dark:bg-slate-600 mx-1"></div>
                                                     <button
                                                         onClick={() => viewerRef.current?.deleteSelected()}
-                                                        className="px-2 py-1 text-xs text-slate-500 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
-                                                        title="Del."
+                                                        disabled={!hasRedactionSelected}
+                                                        className={`px-2 py-1 text-xs rounded transition-colors ${hasRedactionSelected
+                                                                ? 'text-slate-500 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-700'
+                                                                : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                                                            }`}
+                                                        title="Delete selected box"
                                                     >
                                                         Delete
                                                     </button>
                                                     <div className="w-px h-4 bg-slate-300 dark:bg-slate-600 mx-1"></div>
                                                     <button
                                                         onClick={() => viewerRef.current?.clearRedactions()}
-                                                        className="px-2 py-1 text-xs text-slate-500 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+                                                        disabled={!hasRedactions}
+                                                        className={`px-2 py-1 text-xs rounded transition-colors ${hasRedactions
+                                                                ? 'text-slate-500 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-700'
+                                                                : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                                                            }`}
                                                     >
                                                         Clear
                                                     </button>
@@ -494,6 +500,10 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                             )}
                                         </div>
                                     )}
+                                </div>
+
+                                {/* RIGHT: Image Step Selector + Subset Controls */}
+                                <div className="ml-auto flex items-center gap-3">
                                     <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
                                         <span>Select every</span>
                                         <input
@@ -501,10 +511,9 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                             disabled={isSingleImage}
                                             className={`w-12 text-center text-xs p-1 rounded border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 ${isSingleImage ? 'opacity-50 cursor-not-allowed' : ''}`}
                                         />
-                                        <span>image</span>
+                                        <span>image.</span>
                                     </div>
-                                </div>
-                                <div className="flex items-center gap-3">
+                                    <div className="w-px h-4 bg-slate-300 dark:bg-slate-600"></div>
                                     <span className={`text-xs ${currentSliceCount > 100 ? 'text-red-500 font-bold' : 'text-slate-500'}`}>
                                         Selection: {currentSliceCount} images
                                     </span>

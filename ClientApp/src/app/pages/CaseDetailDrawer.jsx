@@ -54,15 +54,6 @@ const DIAGNOSTIC_CERTAINTY_MAP = {
     1: "Possible", 2: "Probable", 3: "Almost Certain", 4: "Certain", 5: "Not applicable"
 };
 
-/**
- * Shared Case Detail Drawer component.
- * Displays detailed information about a submitted case in a slide-out drawer.
- * 
- * @param {boolean} isOpen - Controls drawer visibility
- * @param {function} onClose - Callback when drawer is closed
- * @param {string} caseId - GUID of the case to display
- * @param {number} zIndex - Optional z-index for stacking (default: 50)
- */
 const CaseDetailDrawer = ({ isOpen, onClose, caseId, zIndex = 50 }) => {
     const [caseDetail, setCaseDetail] = useState(null);
     const [loading, setLoading] = useState(false);

@@ -1,19 +1,6 @@
 import { Fragment } from 'react';
 import { Transition, Dialog } from '@headlessui/react';
 
-/**
- * Modal component that warns users when selecting a study for a patient
- * who already has existing cases in the system. Displayed before
- * transitioning to the draft editor.
- * 
- * @param {boolean} isOpen - Controls modal visibility
- * @param {function} onClose - Callback when modal is closed/cancelled
- * @param {function} onContinue - Callback when user chooses to continue with draft creation
- * @param {function} onViewCase - Callback when user clicks to view a case (receives caseId)
- * @param {Array} existingCases - Array of existing case objects for the patient
- * @param {string} patientName - Display name of the patient
- * @param {string} patientId - Patient MRN/ID
- */
 const DuplicatePatientWarningModal = ({
     isOpen,
     onClose,

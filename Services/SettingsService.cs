@@ -3,13 +3,6 @@ using RadiopaediaConnect.Models;
 
 namespace RadiopaediaConnect.Services
 {
-    /// <summary>
-    /// Provides application settings from the database.
-    /// Reads from DB on first access, then holds in memory until
-    /// InvalidateCache() is called (which happens after every save
-    /// in SettingsController). This is the same pattern as IOptions -
-    /// load once, hold forever, refresh on change.
-    /// </summary>
     public class SettingsService
     {
         private readonly SettingsRepository _repository;
@@ -24,10 +17,6 @@ namespace RadiopaediaConnect.Services
             _logger = logger;
         }
 
-        /// <summary>
-        /// Clear the in-memory copy so the next read goes to the DB.
-        /// Called by SettingsController after any write operation.
-        /// </summary>
         public void InvalidateCache()
         {
             _cachedSettings = null;
@@ -55,10 +44,6 @@ namespace RadiopaediaConnect.Services
             return _cachedNodes!;
         }
 
-        /// <summary>
-        /// Build a DicomSettings object from the current DB state.
-        /// Used by DicomScu, DicomQueueWorker, DicomController, etc.
-        /// </summary>
         public async Task<DicomSettings> GetDicomSettingsAsync()
         {
             await EnsureLoadedAsync();
@@ -85,19 +70,12 @@ namespace RadiopaediaConnect.Services
             };
         }
 
-        /// <summary>
-        /// Get Radiopaedia OAuth credentials from the DB.
-        /// </summary>
         public async Task<(string? ClientId, string? ClientSecret)> GetRadiopaediaCredentialsAsync()
         {
             await EnsureLoadedAsync();
             return (_cachedSettings!.RadiopaediaClientId, _cachedSettings!.RadiopaediaClientSecret);
         }
 
-        /// <summary>
-        /// Validates that all required settings are configured.
-        /// Returns a list of validation issues (empty = valid).
-        /// </summary>
         public async Task<SettingsValidationResult> ValidateAsync()
         {
             await EnsureLoadedAsync();

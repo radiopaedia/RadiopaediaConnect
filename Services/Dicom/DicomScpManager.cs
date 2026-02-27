@@ -5,11 +5,6 @@ using System.Text;
 
 namespace RadiopaediaConnect.Services.Dicom
 {
-    /// <summary>
-    /// Manages the lifecycle of the DICOM SCP server.
-    /// Supports stopping and restarting (e.g. after AE Title changes).
-    /// Port is always 104 (container users map it externally).
-    /// </summary>
     public class DicomScpManager
     {
         private readonly DicomRepository _repository;
@@ -31,14 +26,8 @@ namespace RadiopaediaConnect.Services.Dicom
             }
         }
 
-        /// <summary>
-        /// The AE Title the SCP is currently configured with.
-        /// </summary>
         public string CurrentAeTitle => _currentAeTitle;
 
-        /// <summary>
-        /// Start the SCP with the specified AE Title on port 104.
-        /// </summary>
         public void Start(string aeTitle)
         {
             lock (_lock)
@@ -56,9 +45,6 @@ namespace RadiopaediaConnect.Services.Dicom
             }
         }
 
-        /// <summary>
-        /// Stop the SCP.
-        /// </summary>
         public void Stop()
         {
             lock (_lock)
@@ -73,9 +59,6 @@ namespace RadiopaediaConnect.Services.Dicom
             }
         }
 
-        /// <summary>
-        /// Restart the SCP with a new AE Title (port stays at 104).
-        /// </summary>
         public void Restart(string aeTitle)
         {
             _logger.LogInformation($"[DICOM] Restarting SCP with AE Title '{aeTitle}'...");
@@ -89,11 +72,6 @@ namespace RadiopaediaConnect.Services.Dicom
         }
     }
 
-    /// <summary>
-    /// DICOM C-STORE service provider. Handles incoming DICOM associations.
-    /// Uses static fields as a bridge since DicomServerFactory instantiates
-    /// this class internally.
-    /// </summary>
     public class CStoreService : DicomService, IDicomServiceProvider, IDicomCStoreProvider, IDicomCEchoProvider
     {
         internal static DicomRepository? StaticRepository;

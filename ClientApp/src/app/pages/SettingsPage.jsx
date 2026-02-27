@@ -122,8 +122,6 @@ const SettingsPage = () => {
         navigate('/');
     };
 
-    // ─── Save Local Settings ───────────────────────────────────────
-
     const handleSaveLocal = async () => {
         setSaving(true);
         try {
@@ -152,8 +150,6 @@ const SettingsPage = () => {
             setSaving(false);
         }
     };
-
-    // ─── Node CRUD ─────────────────────────────────────────────────
 
     const emptyNode = { name: '', aeTitle: '', host: '', port: 104, callingAe: 'RCONNECT_SCU', sortOrder: nodes.length };
 
@@ -238,8 +234,6 @@ const SettingsPage = () => {
         }
     };
 
-    // ─── Password Change ───────────────────────────────────────────
-
     const handleChangePassword = async () => {
         setPasswordError('');
         if (passwordForm.newPassword.length < 6) {
@@ -277,8 +271,6 @@ const SettingsPage = () => {
         }
     };
 
-    // ─── Render ────────────────────────────────────────────────────
-
     if (!authorized) {
         return (
             <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-900">
@@ -312,8 +304,8 @@ const SettingsPage = () => {
             {/* Toast message */}
             {saveMessage && (
                 <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-all ${saveMessage.isError
-                        ? 'bg-red-100 text-red-800 dark:bg-red-900/80 dark:text-red-200'
-                        : 'bg-green-100 text-green-800 dark:bg-green-900/80 dark:text-green-200'
+                    ? 'bg-red-100 text-red-800 dark:bg-red-900/80 dark:text-red-200'
+                    : 'bg-green-100 text-green-800 dark:bg-green-900/80 dark:text-green-200'
                     }`}>
                     {saveMessage.text}
                 </div>
@@ -327,8 +319,8 @@ const SettingsPage = () => {
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
                             className={`flex-shrink-0 px-4 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === tab.id
-                                    ? 'bg-indigo-600 text-white shadow-sm'
-                                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700'
+                                ? 'bg-indigo-600 text-white shadow-sm'
+                                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700'
                                 }`}
                         >
                             {tab.label}
@@ -339,7 +331,6 @@ const SettingsPage = () => {
                 {/* Tab Content */}
                 <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
 
-                    {/* ── SCP Tab ─────────────────────────────────── */}
                     {activeTab === 'scp' && (
                         <div className="space-y-6">
                             <div>
@@ -398,7 +389,6 @@ const SettingsPage = () => {
                         </div>
                     )}
 
-                    {/* ── Remote Nodes Tab ────────────────────────── */}
                     {activeTab === 'nodes' && (
                         <div className="space-y-6">
                             <div className="flex items-center justify-between">
@@ -464,8 +454,8 @@ const SettingsPage = () => {
 
                                         {echoResult && (
                                             <div className={`mt-3 px-3 py-2 rounded text-sm ${echoResult.success
-                                                    ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
-                                                    : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+                                                ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                                                : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
                                                 }`}>
                                                 {echoResult.success ? '\u2713' : '\u2717'} {echoResult.message}
                                             </div>
@@ -535,8 +525,8 @@ const SettingsPage = () => {
 
                                     {echoResults.new && !editingNode.id && (
                                         <div className={`mt-3 px-3 py-2 rounded text-sm ${echoResults.new.success
-                                                ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
-                                                : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+                                            ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                                            : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
                                             }`}>
                                             {echoResults.new.success ? '\u2713' : '\u2717'} {echoResults.new.message}
                                         </div>
@@ -574,9 +564,20 @@ const SettingsPage = () => {
                         <div className="space-y-6">
                             <div>
                                 <h2 className="text-lg font-semibold mb-1">Radiopaedia OAuth Credentials</h2>
-                                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                                <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">
                                     These credentials are required for user authentication and case submission. Obtain them from Radiopaedia.
                                 </p>
+                                <a
+                                    href="https://radiopaedia.org/oauth/applications"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
+                                >
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                    </svg>
+                                    Manage OAuth Applications on Radiopaedia
+                                </a>
                             </div>
 
                             <div className="space-y-4">

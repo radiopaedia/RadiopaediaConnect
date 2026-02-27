@@ -96,6 +96,9 @@ namespace RadiopaediaConnect.Extensions
                 };
             });
 
+            // Register the shared credentials cache (singleton so it survives across requests)
+            services.AddSingleton<OAuthCredentialsCache>();
+
             // Register the PostConfigure handler that injects DB credentials at runtime
             services.AddSingleton<IPostConfigureOptions<OAuthOptions>, RadiopaediaOAuthPostConfigure>();
 
@@ -103,41 +106,79 @@ namespace RadiopaediaConnect.Extensions
         }
     }
 
-    /// <summary>
-    /// Injects Radiopaedia OAuth credentials from the database into OAuthOptions
-    /// at runtime (each time the options are resolved). Uses the repository
-    /// directly with a synchronous Dapper call to avoid async-over-sync deadlocks.
-    /// </summary>
-    public class RadiopaediaOAuthPostConfigure : IPostConfigureOptions<OAuthOptions>
+    public class OAuthCredentialsCache
     {
-        private readonly SettingsRepository _repository;
-        private readonly ILogger<RadiopaediaOAuthPostConfigure> _logger;
+        private string? _clientId;
+        private string? _clientSecret;
+        private bool _loaded;
+        private readonly object _lock = new();
 
-        public RadiopaediaOAuthPostConfigure(SettingsRepository repository, ILogger<RadiopaediaOAuthPostConfigure> logger)
+        private readonly SettingsRepository _repository;
+        private readonly ILogger<OAuthCredentialsCache> _logger;
+
+        public OAuthCredentialsCache(SettingsRepository repository, ILogger<OAuthCredentialsCache> logger)
         {
             _repository = repository;
             _logger = logger;
+        }
+
+        public (string? ClientId, string? ClientSecret) Get()
+        {
+            lock (_lock)
+            {
+                if (!_loaded)
+                    Load();
+
+                return (_clientId, _clientSecret);
+            }
+        }
+
+        public void Refresh()
+        {
+            lock (_lock)
+            {
+                _loaded = false;
+                Load();
+                _logger.LogInformation("[OAuth] Credentials cache refreshed.");
+            }
+        }
+
+        private void Load()
+        {
+            try
+            {
+                var settings = _repository.GetLocalSettings();
+                _clientId = settings.RadiopaediaClientId;
+                _clientSecret = settings.RadiopaediaClientSecret;
+                _loaded = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[OAuth] Could not load credentials from DB: {ex.Message}");
+            }
+        }
+    }
+
+    public class RadiopaediaOAuthPostConfigure : IPostConfigureOptions<OAuthOptions>
+    {
+        private readonly OAuthCredentialsCache _cache;
+
+        public RadiopaediaOAuthPostConfigure(OAuthCredentialsCache cache)
+        {
+            _cache = cache;
         }
 
         public void PostConfigure(string? name, OAuthOptions options)
         {
             if (name != "Radiopaedia") return;
 
-            try
-            {
-                // Synchronous Dapper call - safe in a non-async context
-                var settings = _repository.GetLocalSettings();
+            var (clientId, clientSecret) = _cache.Get();
 
-                if (!string.IsNullOrEmpty(settings.RadiopaediaClientId))
-                    options.ClientId = settings.RadiopaediaClientId;
+            if (!string.IsNullOrEmpty(clientId))
+                options.ClientId = clientId;
 
-                if (!string.IsNullOrEmpty(settings.RadiopaediaClientSecret))
-                    options.ClientSecret = settings.RadiopaediaClientSecret;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"[OAuth] Could not load credentials from DB: {ex.Message}");
-            }
+            if (!string.IsNullOrEmpty(clientSecret))
+                options.ClientSecret = clientSecret;
         }
     }
 }

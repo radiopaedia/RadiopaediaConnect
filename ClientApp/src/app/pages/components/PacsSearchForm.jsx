@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 const PacsSearchForm = ({ onSearch, loading }) => {
     const [nodes, setNodes] = useState([]);
-    const [error, setError] = useState(''); // [New] Error state
+    const [error, setError] = useState('');
 
     const [formData, setFormData] = useState({
         patientName: '',
@@ -11,7 +11,6 @@ const PacsSearchForm = ({ onSearch, loading }) => {
         remoteNodeName: ''
     });
 
-    // 1. Fetch available PACS nodes on mount
     useEffect(() => {
         const fetchNodes = async () => {
             try {
@@ -62,7 +61,7 @@ const PacsSearchForm = ({ onSearch, loading }) => {
             }
         };
         fetchNodes();
-    }, []); // Empty dependency array means this runs once on mount
+    }, []);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -73,7 +72,6 @@ const PacsSearchForm = ({ onSearch, loading }) => {
     const handleSubmit = (e) => {
         e.preventDefault();
 
-        // [New] Validation Logic
         const hasCriteria =
             formData.patientName.trim() !== '' ||
             formData.patientId.trim() !== '' ||

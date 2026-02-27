@@ -139,7 +139,6 @@ namespace RadiopaediaConnect.Services
                 var draftEntity = await _repository.GetDraftCaseAsync(caseId);
                 string username = draftEntity?.Username ?? "unknown_user";
 
-                // 1. Create Case
                 rCaseId = await _apiClient.CreateCaseAsync(draftEntity, username);
                 _logger.LogInformation($"[PIPELINE] Case Created! Radiopaedia ID: {rCaseId}");
 
@@ -148,7 +147,6 @@ namespace RadiopaediaConnect.Services
 
                 foreach (var study in fullCase.Studies)
                 {
-                    // 2. Create Study
                     string rawModality = study.Series[0].Modality;
                     string radiopaediaModality = MapToRadiopaediaModality(rawModality);
                     _logger.LogInformation($"[PIPELINE] Processing Study: {study.StudyInstanceUid} -> {radiopaediaModality}");
@@ -164,7 +162,6 @@ namespace RadiopaediaConnect.Services
 
                     foreach (var series in study.Series)
                     {
-                        // 3. Process & Upload Series
                         _logger.LogInformation($"[PIPELINE] Processing Series: {series.SeriesInstanceUid}");
 
                         string processedFolder = await PrepareSeriesAsync(study.StudyInstanceUid, series, study.RemoteNodeName);

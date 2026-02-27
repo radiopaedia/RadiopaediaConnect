@@ -96,9 +96,6 @@ namespace RadiopaediaConnect.Models
         public DateTime? PatientDob { get; set; }
     }
 
-    /// <summary>
-    /// DTO for returning case information to the frontend list view
-    /// </summary>
     public class CaseListItemDto
     {
         public Guid Id { get; set; }
@@ -117,11 +114,6 @@ namespace RadiopaediaConnect.Models
         public DateTime? PatientDob { get; set; }
     }
 
-    #region Case Detail DTOs
-
-    /// <summary>
-    /// DTO for detailed case view including studies and series
-    /// </summary>
     public class CaseDetailDto
     {
         public Guid Id { get; set; }
@@ -145,9 +137,6 @@ namespace RadiopaediaConnect.Models
         public List<CaseDetailStudyDto> Studies { get; set; } = new();
     }
 
-    /// <summary>
-    /// Study information within a case detail view
-    /// </summary>
     public class CaseDetailStudyDto
     {
         public long Id { get; set; }
@@ -158,9 +147,6 @@ namespace RadiopaediaConnect.Models
         public List<CaseDetailSeriesDto> Series { get; set; } = new();
     }
 
-    /// <summary>
-    /// Series information within a study detail view
-    /// </summary>
     public class CaseDetailSeriesDto
     {
         public long Id { get; set; }
@@ -173,6 +159,4 @@ namespace RadiopaediaConnect.Models
         public int SelectedFrameCount { get; set; }
         public int RedactionCount { get; set; }
     }
-
-    #endregion
 }

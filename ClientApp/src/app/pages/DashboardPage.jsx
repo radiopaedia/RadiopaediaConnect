@@ -8,7 +8,6 @@ import CaseDetailDrawer from './CaseDetailDrawer';
 import DuplicatePatientWarningModal from './DuplicatePatientWarningModal';
 import SubmissionSuccessModal from './SubmissionSuccessModal';
 
-// --- Radiopaedia Constants ---
 const SYSTEM_MAP = {
     "Breast": 1, "Vascular": 2, "Central Nervous System": 3, "Chest": 4,
     "Gastrointestinal": 6, "Head & Neck": 7, "Hepatobiliary": 8, "Musculoskeletal": 9,
@@ -28,14 +27,12 @@ const DIAGNOSTIC_CERTAINTY_OPTIONS = [
 const DashboardPage = ({ user, onLogout }) => {
     const [viewMode, setViewMode] = useState('search');
 
-    // --- Search State ---
     const [studies, setStudies] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
     const [hasSearched, setHasSearched] = useState(false);
     const [selectedSearchStudy, setSelectedSearchStudy] = useState(null);
     const [isInitializingDraft, setIsInitializingDraft] = useState(false);
 
-    // --- Draft Master State ---
     const [patientInfo, setPatientInfo] = useState(null);
     const [patientStudies, setPatientStudies] = useState([]);
     const [errors, setErrors] = useState({});
@@ -55,20 +52,16 @@ const DashboardPage = ({ user, onLogout }) => {
     const [isLoadingSeries, setIsLoadingSeries] = useState(false);
     const [loadedSeriesData, setLoadedSeriesData] = useState({});
 
-    // --- Duplicate Patient Warning State ---
     const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
     const [existingPatientCases, setExistingPatientCases] = useState([]);
     const [pendingDraftStudy, setPendingDraftStudy] = useState(null);
 
-    // --- Case Detail Drawer State ---
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [selectedCaseId, setSelectedCaseId] = useState(null);
 
-    // --- Submission Success Modal State ---
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [submittedCaseId, setSubmittedCaseId] = useState(null);
 
-    // --- Drag & Drop State ---
     const dragItem = useRef();
     const dragOverItem = useRef();
 
@@ -118,17 +111,14 @@ const DashboardPage = ({ user, onLogout }) => {
         dragOverItem.current = null;
     };
 
-    // --- HELPER: Full Reset ---
     // Clears everything to return to a pristine "Search" state
     const resetToSearch = () => {
-        // 1. Reset Search Context
         setStudies([]);
         setHasSearched(false);
         setSelectedSearchStudy(null);
         setIsSearching(false);
         setIsInitializingDraft(false);
 
-        // 2. Reset Draft Context
         setPatientInfo(null);
         setPatientStudies([]);
         setErrors({});
@@ -140,16 +130,13 @@ const DashboardPage = ({ user, onLogout }) => {
         setActiveStudyUid(null);
         setLoadedSeriesData({});
 
-        // 3. Reset Duplicate Warning Context
         setShowDuplicateWarning(false);
         setExistingPatientCases([]);
         setPendingDraftStudy(null);
 
-        // 4. Navigate
         setViewMode('search');
     };
 
-    // --- Search Logic ---
     const handleSearch = async (criteria) => {
         setIsSearching(true);
         setSelectedSearchStudy(null);
@@ -176,7 +163,6 @@ const DashboardPage = ({ user, onLogout }) => {
         }
     };
 
-    // --- Initialize Draft ---
     const handleInitializeDraft = async () => {
         if (!selectedSearchStudy) return;
 
@@ -203,12 +189,10 @@ const DashboardPage = ({ user, onLogout }) => {
         }
     };
 
-    // Extracted draft initialization logic so it can be called from
-    // both the normal flow and the "Continue Anyway" modal action.
+    // called from both the normal flow and the "Continue Anyway" modal action
     const proceedWithDraftInit = async (primaryStudy) => {
         setIsInitializingDraft(true);
         try {
-            // Fetch comprehensive patient history using Patient ID
             const criteria = {
                 patientId: primaryStudy.patientId,
                 remoteNodeName: primaryStudy.remoteNodeName,
@@ -230,10 +214,8 @@ const DashboardPage = ({ user, onLogout }) => {
                 remoteNodeName: criteria.remoteNodeName
             }));
 
-            // Sort by date descending
             relatedStudies.sort((a, b) => new Date(b.studyDate) - new Date(a.studyDate));
 
-            // Setup Patient Info
             let age = primaryStudy.patientAge || '';
             let sex = '';
             if (primaryStudy.patientSex === 'M') sex = 'male';
@@ -302,7 +284,6 @@ const DashboardPage = ({ user, onLogout }) => {
         }
     };
 
-    // --- Validation ---
     const validateForm = () => {
         const newErrors = {};
         if (!caseData.title.trim()) newErrors.title = 'Title is required';
@@ -315,7 +296,6 @@ const DashboardPage = ({ user, onLogout }) => {
         return Object.keys(newErrors).length === 0;
     };
 
-    // --- Handlers ---
     const handleSwitchActiveStudy = (study) => {
         initStudyInDraft(study);
         setActiveStudyUid(study.studyInstanceUid);
@@ -375,7 +355,6 @@ const DashboardPage = ({ user, onLogout }) => {
         }
     };
 
-    // --- Build Payload Helper ---
     const buildSubmissionPayload = () => {
         // Iterate patientStudies to preserve the user-defined order
         const studiesPayload = patientStudies
@@ -430,7 +409,6 @@ const DashboardPage = ({ user, onLogout }) => {
         };
     };
 
-    // --- Submit the payload to the server ---
     const submitCaseToServer = async (payload) => {
         try {
             const res = await fetch('/api/cases/submit', {
@@ -453,7 +431,6 @@ const DashboardPage = ({ user, onLogout }) => {
         }
     };
 
-    // --- Check for existing patient cases ---
     const checkPatientDuplicates = async (patientId) => {
         if (!patientId) return [];
 
@@ -469,7 +446,6 @@ const DashboardPage = ({ user, onLogout }) => {
         return [];
     };
 
-    // --- Submit Logic ---
     const handleSubmit = async () => {
         if (!validateForm()) {
             alert("Please correct the errors in the Case Details section.");
@@ -486,7 +462,6 @@ const DashboardPage = ({ user, onLogout }) => {
         await submitCaseToServer(payload);
     };
 
-    // --- Handle warning modal actions ---
     const handleDuplicateWarningClose = () => {
         setShowDuplicateWarning(false);
         setPendingDraftStudy(null);
@@ -522,7 +497,6 @@ const DashboardPage = ({ user, onLogout }) => {
         }
     };
 
-    // --- Success Modal Actions ---
     const handleSuccessGoToMyCases = () => {
         setShowSuccessModal(false);
         setSubmittedCaseId(null);
@@ -545,7 +519,6 @@ const DashboardPage = ({ user, onLogout }) => {
     const activeStudy = patientStudies.find(s => s.studyInstanceUid === activeStudyUid);
     const activeDraftData = draftContent[activeStudyUid] || { findings: '', seriesSelection: {} };
 
-    // --- Counts ---
     const totalStudiesCount = patientStudies.length;
     const selectedStudiesCount = patientStudies.reduce((acc, s) => {
         const seriesCount = Object.keys(draftContent[s.studyInstanceUid]?.seriesSelection || {}).length;

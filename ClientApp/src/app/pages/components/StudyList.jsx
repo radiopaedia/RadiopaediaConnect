@@ -28,7 +28,6 @@ const StudyList = ({
         }
     };
 
-    // 1. Loading State
     if (loading) {
         return (
             <div className="bg-white dark:bg-slate-800 shadow rounded-lg p-12 flex flex-col items-center justify-center min-h-[400px]">
@@ -38,7 +37,6 @@ const StudyList = ({
         );
     }
 
-    // 2. Empty State (Pre-search)
     if (!hasSearched && studies.length === 0) {
         return (
             <div className="bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg p-12 flex flex-col items-center justify-center min-h-[400px] text-center">
@@ -51,7 +49,6 @@ const StudyList = ({
         );
     }
 
-    // 3. No Results State
     if (hasSearched && studies.length === 0) {
         return (
             <div className="bg-white dark:bg-slate-800 shadow rounded-lg p-8 text-center min-h-[200px] flex flex-col items-center justify-center">
@@ -60,7 +57,6 @@ const StudyList = ({
         );
     }
 
-    // 4. Results List
     return (
         <div className="bg-white dark:bg-slate-800 shadow rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 flex flex-col">
             {/* Header */}

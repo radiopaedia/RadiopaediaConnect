@@ -221,9 +221,6 @@ namespace RadiopaediaConnect.Data
                 "SELECT * FROM DraftCases WHERE Id = @Id", new { Id = caseId });
         }
 
-        /// <summary>
-        /// Get all cases for a specific user, ordered by creation date descending
-        /// </summary>
         public async Task<IEnumerable<CaseListItemDto>> GetUserCasesAsync(string username)
         {
             using var conn = GetConnection();
@@ -239,10 +236,6 @@ namespace RadiopaediaConnect.Data
             return await conn.QueryAsync<CaseListItemDto>(sql, new { Username = username });
         }
 
-        /// <summary>
-        /// Get all cases for a specific patient by Patient ID, ordered by creation date descending.
-        /// Used to check for duplicate patient submissions.
-        /// </summary>
         public async Task<IEnumerable<CaseListItemDto>> GetCasesByPatientIdAsync(string patientId)
         {
             if (string.IsNullOrWhiteSpace(patientId))
@@ -261,9 +254,6 @@ namespace RadiopaediaConnect.Data
             return await conn.QueryAsync<CaseListItemDto>(sql, new { PatientId = patientId });
         }
 
-        /// <summary>
-        /// Update the case status after processing
-        /// </summary>
         public async Task UpdateCaseStatusAsync(Guid caseId, string status, string? radiopaediaCaseId = null, string? errorMessage = null)
         {
             using var conn = GetConnection();
@@ -444,10 +434,6 @@ namespace RadiopaediaConnect.Data
             });
         }
 
-        /// <summary>
-        /// Gets the full case detail including studies and series for display.
-        /// Validates that the case belongs to the requesting user.
-        /// </summary>
         public async Task<CaseDetailDto?> GetCaseDetailAsync(Guid caseId, string username)
         {
             using var conn = GetConnection();

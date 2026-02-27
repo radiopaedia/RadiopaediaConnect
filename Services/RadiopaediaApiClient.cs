@@ -160,9 +160,6 @@ namespace RadiopaediaConnect.Services
             }
         }
 
-        /// <summary>
-        /// Gets the current user's draft case quota from Radiopaedia API
-        /// </summary>
         public async Task<UserQuotaDto?> GetUserQuotaAsync(string username)
         {
             var token = await _authService.GetValidAccessTokenAsync(username);
@@ -196,9 +193,6 @@ namespace RadiopaediaConnect.Services
         }
     }
 
-    /// <summary>
-    /// DTO for user quota information
-    /// </summary>
     public class UserQuotaDto
     {
         public int Current { get; set; }

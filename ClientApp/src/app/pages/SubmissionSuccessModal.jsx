@@ -1,16 +1,6 @@
 import { Fragment } from 'react';
 import { Transition, Dialog } from '@headlessui/react';
 
-/**
- * Modal displayed after a case has been successfully submitted.
- * Provides navigation options to view the case, add a new one, or go to the cases list.
- *
- * @param {boolean} isOpen - Controls modal visibility
- * @param {string} caseId - The ID of the newly submitted case
- * @param {function} onGoToMyCases - Callback to navigate to the My Cases page
- * @param {function} onAddNewCase - Callback to reset the form and start a new case
- * @param {function} onViewCase - Callback to open the case detail drawer for the submitted case
- */
 const SubmissionSuccessModal = ({
     isOpen,
     caseId,
@@ -85,7 +75,6 @@ const SubmissionSuccessModal = ({
                                         What would you like to do next?
                                     </p>
 
-                                    {/* View submitted case details */}
                                     <button
                                         onClick={() => onViewCase(caseId)}
                                         className="w-full flex items-center gap-3 p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors group text-left"
@@ -109,7 +98,6 @@ const SubmissionSuccessModal = ({
                                         </svg>
                                     </button>
 
-                                    {/* Go to My Cases */}
                                     <button
                                         onClick={onGoToMyCases}
                                         className="w-full flex items-center gap-3 p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors group text-left"
@@ -132,7 +120,6 @@ const SubmissionSuccessModal = ({
                                         </svg>
                                     </button>
 
-                                    {/* Add a new case */}
                                     <button
                                         onClick={onAddNewCase}
                                         className="w-full flex items-center gap-3 p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors group text-left"

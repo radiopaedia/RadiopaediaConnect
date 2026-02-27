@@ -15,8 +15,6 @@ namespace RadiopaediaConnect.Data
 
         private IDbConnection GetConnection() => new SqliteConnection(_connectionString);
 
-        // ─── Admin Password ────────────────────────────────────────────
-
         public async Task<bool> IsPasswordSetAsync()
         {
             using var conn = GetConnection();
@@ -49,7 +47,13 @@ namespace RadiopaediaConnect.Data
             return await conn.ExecuteScalarAsync<string?>("SELECT PasswordHash FROM AdminConfig WHERE Id = 1");
         }
 
-        // ─── Local Settings ────────────────────────────────────────────
+        public async Task ClearPasswordAsync()
+        {
+            using var conn = GetConnection();
+            // Deleting the row is the equivalent of "no password set",
+            // which is what IsPasswordSetAsync and the setup flow both check for.
+            await conn.ExecuteAsync("DELETE FROM AdminConfig WHERE Id = 1");
+        }
 
         public async Task<LocalSettingsEntity> GetLocalSettingsAsync()
         {
@@ -60,10 +64,7 @@ namespace RadiopaediaConnect.Data
             return settings ?? new LocalSettingsEntity();
         }
 
-        /// <summary>
-        /// Synchronous overload for use in non-async contexts (e.g. IPostConfigureOptions).
-        /// Dapper supports sync calls natively so there is no deadlock risk.
-        /// </summary>
+        // sync overload for IPostConfigureOptions — Dapper handles this safely
         public LocalSettingsEntity GetLocalSettings()
         {
             using var conn = GetConnection();
@@ -110,8 +111,6 @@ namespace RadiopaediaConnect.Data
                          @SmtpFromAddress, @NotificationRecipients, @UpdatedAtUtc)", settings);
             }
         }
-
-        // ─── Remote Nodes ──────────────────────────────────────────────
 
         public async Task<List<RemoteNodeEntity>> GetRemoteNodesAsync()
         {
@@ -175,8 +174,6 @@ namespace RadiopaediaConnect.Data
             tx.Commit();
         }
     }
-
-    // ─── Entities ──────────────────────────────────────────────────────
 
     public class LocalSettingsEntity
     {

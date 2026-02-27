@@ -1,7 +1,10 @@
 ﻿using FellowOakDicom.Network;
 using FellowOakDicom.Network.Client;
+using Microsoft.AspNetCore.Authentication.OAuth;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using RadiopaediaConnect.Data;
+using RadiopaediaConnect.Extensions;
 using RadiopaediaConnect.Services;
 using RadiopaediaConnect.Services.Dicom;
 
@@ -13,19 +16,23 @@ namespace RadiopaediaConnect.Controllers
     {
         private readonly SettingsRepository _repository;
         private readonly SettingsService _settingsService;
+        private readonly OAuthCredentialsCache _oauthCache;
+        private readonly IOptionsMonitor<OAuthOptions> _oauthOptions;
         private readonly ILogger<SettingsController> _logger;
 
         public SettingsController(
             SettingsRepository repository,
             SettingsService settingsService,
+            OAuthCredentialsCache oauthCache,
+            IOptionsMonitor<OAuthOptions> oauthOptions,
             ILogger<SettingsController> logger)
         {
             _repository = repository;
             _settingsService = settingsService;
+            _oauthCache = oauthCache;
+            _oauthOptions = oauthOptions;
             _logger = logger;
         }
-
-        // ─── Public Endpoints (no password required) ───────────────────
 
         /// <summary>
         /// Returns the current setup status: whether the admin password is set
@@ -106,8 +113,6 @@ namespace RadiopaediaConnect.Controllers
             return Ok(new { message = "Password changed successfully." });
         }
 
-        // ─── Protected Endpoints (password required via X-Admin-Password header) ──
-
         /// <summary>
         /// Get local settings (SCP, Radiopaedia, etc).
         /// </summary>
@@ -161,6 +166,14 @@ namespace RadiopaediaConnect.Controllers
             await _repository.SaveLocalSettingsAsync(entity);
             _settingsService.InvalidateCache();
 
+            // refresh credentials cache so next login uses updated values
+            _oauthCache.Refresh();
+            var liveOptions = _oauthOptions.Get("Radiopaedia");
+            if (!string.IsNullOrEmpty(request.RadiopaediaClientId))
+                liveOptions.ClientId = request.RadiopaediaClientId;
+            if (!string.IsNullOrEmpty(request.RadiopaediaClientSecret))
+                liveOptions.ClientSecret = request.RadiopaediaClientSecret;
+
             _logger.LogInformation("[Settings] Local settings saved.");
 
             // Signal that the SCP needs to be restarted if AE Title changed
@@ -170,8 +183,6 @@ namespace RadiopaediaConnect.Controllers
                 scpRestartRequired = scpChanged
             });
         }
-
-        // ─── Remote Nodes ──────────────────────────────────────────────
 
         [HttpGet("nodes")]
         public async Task<IActionResult> GetRemoteNodes()
@@ -324,8 +335,6 @@ namespace RadiopaediaConnect.Controllers
             }
         }
 
-        // ─── Helpers ───────────────────────────────────────────────────
-
         private async Task<bool> AuthorizeAdminAsync()
         {
             var password = Request.Headers["X-Admin-Password"].FirstOrDefault();
@@ -343,7 +352,51 @@ namespace RadiopaediaConnect.Controllers
             return BCrypt.Net.BCrypt.Verify(password, hash);
         }
 
-        // ─── Request DTOs ──────────────────────────────────────────────
+        /// <summary>
+        /// Password recovery via the Radiopaedia App Secret stored in local settings.
+        /// If the provided secret matches, the admin password hash is cleared so the
+        /// user can run through first-time setup again.
+        /// </summary>
+        [HttpPost("password/recover")]
+        public async Task<IActionResult> RecoverPassword([FromBody] RecoverPasswordRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.AppSecret))
+            {
+                return BadRequest(new { message = "App secret is required." });
+            }
+
+            var settings = await _repository.GetLocalSettingsAsync();
+
+            // Constant-time comparison prevents timing attacks
+            var storedSecret = settings.RadiopaediaClientSecret ?? string.Empty;
+            var secretsMatch = CryptographicEquals(storedSecret, request.AppSecret.Trim());
+
+            if (!secretsMatch || string.IsNullOrEmpty(storedSecret))
+            {
+                _logger.LogWarning("[Settings] Failed password recovery attempt.");
+                return Unauthorized(new { message = "App secret is incorrect." });
+            }
+
+            await _repository.ClearPasswordAsync();
+
+            _logger.LogInformation("[Settings] Admin password cleared via app secret recovery.");
+            return Ok(new { message = "Password cleared. Please set a new admin password." });
+        }
+
+        // Constant-time string comparison to avoid timing-based secret enumeration
+        private static bool CryptographicEquals(string a, string b)
+        {
+            if (a.Length != b.Length) return false;
+            int result = 0;
+            for (int i = 0; i < a.Length; i++)
+                result |= a[i] ^ b[i];
+            return result == 0;
+        }
+
+        public class RecoverPasswordRequest
+        {
+            public string AppSecret { get; set; } = string.Empty;
+        }
 
         public class SetPasswordRequest
         {

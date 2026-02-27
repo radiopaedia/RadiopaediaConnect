@@ -6,7 +6,6 @@ import * as cornerstoneMath from 'cornerstone-math';
 import * as cornerstoneTools from 'cornerstone-tools';
 import * as cornerstoneWADOImageLoader from 'cornerstone-wado-image-loader';
 
-// --- CONFIGURATION ---
 // Ensure external dependencies are linked
 cornerstoneTools.external.cornerstone = cornerstone;
 cornerstoneTools.external.cornerstoneMath = cornerstoneMath;
@@ -14,7 +13,7 @@ cornerstoneTools.external.Hammer = Hammer;
 cornerstoneWADOImageLoader.external.cornerstone = cornerstone;
 cornerstoneWADOImageLoader.external.dicomParser = dicomParser;
 
-// Global flag to ensure tools init runs exactly once per app session
+// ensure tools init only runs once per session
 let isToolsInitialized = false;
 
 const DicomViewer = forwardRef(({
@@ -23,16 +22,16 @@ const DicomViewer = forwardRef(({
     activeSlice = 0,
     onSliceChange,
     sliceRange = null,
-    redactions: propRedactions = [] // <--- NEW: Accept redactions from parent
+    redactions: propRedactions = [],
+    onSelectionChange,   // Called with (hasSelection: bool) when selectedId changes
+    onRedactionsChange   // Called with (hasRedactions: bool) when the redactions list changes
 }, ref) => {
     const elementRef = useRef(null);
     const [isLoading, setIsLoading] = useState(true);
 
-    // --- 1. Redaction State ---
     const [redactions, setRedactions] = useState([]);
     const [selectedId, setSelectedId] = useState(null);
 
-    // --- NEW: Sync Internal State with Props ---
     // This restores the drawings when the user switches back to this series
     useEffect(() => {
         if (propRedactions) {
@@ -47,6 +46,16 @@ const DicomViewer = forwardRef(({
         }
     }, [propRedactions]);
 
+    // Notify parent when a redaction box is selected/deselected
+    useEffect(() => {
+        if (onSelectionChange) onSelectionChange(selectedId !== null);
+    }, [selectedId, onSelectionChange]);
+
+    // Notify parent when the redactions list becomes empty or non-empty
+    useEffect(() => {
+        if (onRedactionsChange) onRedactionsChange(redactions.length > 0);
+    }, [redactions.length, onRedactionsChange]);
+
     // Interaction State
     const [interaction, setInteraction] = useState({
         mode: 'idle',
@@ -56,7 +65,6 @@ const DicomViewer = forwardRef(({
         handle: null
     });
 
-    // --- 2. State Locks ---
     const isProgrammaticScroll = useRef(false);
     const isManualScrolling = useRef(false);
     const manualScrollTimeout = useRef(null);
@@ -64,7 +72,6 @@ const DicomViewer = forwardRef(({
 
     useEffect(() => { rangeRef.current = sliceRange; }, [sliceRange]);
 
-    // --- 3. EXPOSE METHODS ---
     useImperativeHandle(ref, () => ({
         getRedactionData: () => {
             // Return clean data (x, y, w, h) without internal IDs
@@ -85,7 +92,6 @@ const DicomViewer = forwardRef(({
         }
     }));
 
-    // --- 4. KEYBOARD LISTENERS ---
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (viewMode === 'redact' && selectedId && (e.key === 'Delete' || e.key === 'Backspace')) {
@@ -97,12 +103,10 @@ const DicomViewer = forwardRef(({
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [viewMode, selectedId]);
 
-    // --- 5. INITIALIZATION (STRICT MODE SAFE) ---
     useEffect(() => {
         const element = elementRef.current;
         if (!element) return;
 
-        // 1. Initialize Tools (Once Global)
         if (!isToolsInitialized) {
             cornerstoneTools.init({
                 showSVGCursors: true,
@@ -111,7 +115,6 @@ const DicomViewer = forwardRef(({
             isToolsInitialized = true;
         }
 
-        // 2. Enable Element (Safe Check)
         const enabledElements = cornerstone.getEnabledElements();
         const isEnabled = enabledElements.some(e => e.element === element);
 
@@ -119,7 +122,6 @@ const DicomViewer = forwardRef(({
             cornerstone.enable(element);
         }
 
-        // 3. Add Tools (Safe to re-add)
         const WwwcTool = cornerstoneTools.WwwcTool;
         const StackScrollMouseWheelTool = cornerstoneTools.StackScrollMouseWheelTool;
 
@@ -131,7 +133,6 @@ const DicomViewer = forwardRef(({
             scrollTool.configuration = { loop: false, allowSkipping: true, invert: false };
         }
 
-        // Cleanup
         return () => {
             const isStillEnabled = cornerstone.getEnabledElements().some(e => e.element === element);
             if (isStillEnabled) {
@@ -144,7 +145,6 @@ const DicomViewer = forwardRef(({
         };
     }, []);
 
-    // --- 6. IMAGE LOADING & EVENTS ---
     useEffect(() => {
         const element = elementRef.current;
         if (!element || !imageIds || imageIds.length === 0) return;
@@ -161,10 +161,9 @@ const DicomViewer = forwardRef(({
                 try {
                     cornerstone.displayImage(element, image);
 
-                    // CRITICAL: Force resize after first render to fix "Blank Screen"
+                    // force resize to fix blank canvas on first render
                     cornerstone.resize(element);
 
-                    // Setup Stack
                     cornerstoneTools.clearToolState(element, 'stack');
                     cornerstoneTools.addStackStateManager(element, ['stack']);
                     cornerstoneTools.addToolState(element, 'stack', stack);
@@ -181,7 +180,6 @@ const DicomViewer = forwardRef(({
                 setIsLoading(false);
             });
 
-        // Event Handlers
         const onNewImage = (e) => {
             if (isProgrammaticScroll.current) return;
 
@@ -219,7 +217,6 @@ const DicomViewer = forwardRef(({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [imageIds]);
 
-    // --- 7. HANDLE EXTERNAL SLICE CHANGES ---
     useEffect(() => {
         const element = elementRef.current;
         if (!element || isLoading) return;
@@ -244,7 +241,6 @@ const DicomViewer = forwardRef(({
         }
     }, [activeSlice, isLoading]);
 
-    // --- 8. MODE SWITCHING ---
     useEffect(() => {
         updateToolModes(viewMode);
     }, [viewMode, isLoading]);
@@ -267,7 +263,6 @@ const DicomViewer = forwardRef(({
         }
     };
 
-    // --- 9. GEOMETRY HELPERS ---
     const getCoords = (e) => {
         const element = elementRef.current;
         if (!element) return { x: 0, y: 0 };
@@ -296,7 +291,6 @@ const DicomViewer = forwardRef(({
         }
     };
 
-    // --- 10. INTERACTION HANDLERS ---
     const handleMouseDown = (e, type, id = null, handle = null) => {
         if (viewMode !== 'redact' || e.button !== 0) return;
 

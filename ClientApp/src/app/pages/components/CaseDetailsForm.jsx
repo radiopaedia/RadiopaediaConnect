@@ -10,17 +10,14 @@ const CaseDetailsForm = ({ formData, onChange, errors = {}, systemMap = {}, cert
         error ? <p className="text-xs text-red-500 mt-1">{error}</p> : null
     );
 
-    // Added "h-full flex flex-col" to the main container
     return (
         <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6 h-full flex flex-col">
             <div className="mb-4 flex-none">
                 <h2 className="text-lg font-bold text-slate-900 dark:text-white">Case Details</h2>
             </div>
 
-            {/* Content Container: flex-1 to fill remaining space */}
             <div className="flex-1 flex flex-col space-y-4">
 
-                {/* 1. Title */}
                 <div>
                     <InputLabel label="Title" name="title" />
                     <input
@@ -33,7 +30,6 @@ const CaseDetailsForm = ({ formData, onChange, errors = {}, systemMap = {}, cert
                     <ErrorMsg error={errors.title} />
                 </div>
 
-                {/* 2. Age & Sex */}
                 <div className="grid grid-cols-2 gap-4">
                     <div>
                         <InputLabel label="Age" name="age" />
@@ -64,7 +60,6 @@ const CaseDetailsForm = ({ formData, onChange, errors = {}, systemMap = {}, cert
                     </div>
                 </div>
 
-                {/* 3. System */}
                 <div>
                     <InputLabel label="System" name="system" />
                     <select
@@ -74,7 +69,6 @@ const CaseDetailsForm = ({ formData, onChange, errors = {}, systemMap = {}, cert
                         className={`w-full rounded-md border py-2 px-3 shadow-sm ${errors.system ? 'border-red-500' : 'border-slate-300 dark:border-slate-600 dark:bg-slate-900'}`}
                     >
                         <option value="">Select System</option>
-                        {/* 2. Dynamically map options from the prop */}
                         {Object.keys(systemMap).sort().map((systemName) => (
                             <option key={systemName} value={systemName}>
                                 {systemName}
@@ -84,7 +78,6 @@ const CaseDetailsForm = ({ formData, onChange, errors = {}, systemMap = {}, cert
                     <ErrorMsg error={errors.system} />
                 </div>
 
-                {/* 4. Diagnostic Certainty */}
                 <div>
                     <InputLabel label="Diagnostic Certainty" name="diagnostic_certainty" />
                     <div className="flex gap-2">
@@ -111,14 +104,12 @@ const CaseDetailsForm = ({ formData, onChange, errors = {}, systemMap = {}, cert
                     </div>
                 </div>
 
-                {/* 5. Presentation (Flexible Height) */}
                 <div className="flex-1 flex flex-col min-h-[120px]">
                     <InputLabel label="Presentation" name="presentation" />
                     <textarea
                         name="presentation"
                         value={formData.presentation}
                         onChange={onChange}
-                        // Removed fixed 'rows' to allow flex-grow control
                         className={`w-full flex-1 rounded-md border py-2 px-3 shadow-sm resize-none ${errors.presentation ? 'border-red-500' : 'border-slate-300 dark:border-slate-600 dark:bg-slate-900'}`}
                         placeholder="Describe the clinical presentation..."
                     />
