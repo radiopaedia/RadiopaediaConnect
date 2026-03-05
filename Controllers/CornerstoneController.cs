@@ -1,8 +1,9 @@
-﻿using FellowOakDicom;
+using FellowOakDicom;
 using FellowOakDicom.Imaging;
 using FellowOakDicom.Imaging.Codec;
 using Microsoft.AspNetCore.Mvc;
 using RadiopaediaConnect.Data;
+using RadiopaediaConnect.Services;
 
 namespace RadiopaediaConnect.Controllers
 {
@@ -17,6 +18,9 @@ namespace RadiopaediaConnect.Controllers
             _repository = repository;
         }
 
+        /// <summary>
+        /// Returns sorted wadouri: URLs for legacy WADO image loader (kept for backward compatibility).
+        /// </summary>
         [HttpGet("series/{seriesUid}")]
         public async Task<IActionResult> GetSeriesFiles(string seriesUid)
         {
@@ -61,7 +65,6 @@ namespace RadiopaediaConnect.Controllers
             var baseUrl = $"{Request.Scheme}://{Request.Host}/api/cornerstone/image";
 
             var sortedUrls = dicomList
-                //.OrderBy(x => x.Distance)
                 .OrderBy(x => x.InstanceNumber)
                 .ThenBy(x => x.FrameIndex)
                 .Select(x => $"wadouri:{baseUrl}?seriesUid={seriesUid}&filename={x.FileName}&frame={x.FrameIndex}")
@@ -70,6 +73,64 @@ namespace RadiopaediaConnect.Controllers
             return Ok(sortedUrls);
         }
 
+        /// <summary>
+        /// Returns structured metadata including multiframe info and expanded frame list.
+        /// Used by the custom csdicom: image loader.
+        /// </summary>
+        [HttpGet("series/{seriesUid}/metadata")]
+        public async Task<IActionResult> GetSeriesMetadata(string seriesUid)
+        {
+            var series = await _repository.GetSeriesAsync(seriesUid);
+            if (series == null || !series.IsRetrieved)
+                return NotFound("Series not found or not yet retrieved.");
+
+            if (!Directory.Exists(series.StoragePath))
+                return NotFound("DICOM directory not found on disk.");
+
+            var dicomFiles = Directory.GetFiles(series.StoragePath, "*.dcm");
+            var fileInfos = await DicomFrameExpander.ScanFilesAsync(dicomFiles);
+            var expandedFrames = DicomFrameExpander.ExpandFrames(fileInfos);
+
+            return Ok(new
+            {
+                seriesUid,
+                totalFrameCount = expandedFrames.Count,
+                hasMultiframe = fileInfos.Any(f => f.NumberOfFrames > 1),
+                files = fileInfos.Select(f => new
+                {
+                    f.FileName,
+                    f.InstanceNumber,
+                    f.NumberOfFrames,
+                    isMultiframe = f.NumberOfFrames > 1
+                }),
+                expandedFrames = expandedFrames.Select(f => new
+                {
+                    f.FileName,
+                    f.FrameIndex
+                })
+            });
+        }
+
+        /// <summary>
+        /// Serves raw DICOM file bytes with NO transcoding, NO frame extraction.
+        /// The client handles all parsing and decoding.
+        /// </summary>
+        [HttpGet("raw")]
+        public async Task<IActionResult> GetRawDicomFile([FromQuery] string seriesUid, [FromQuery] string filename)
+        {
+            var series = await _repository.GetSeriesAsync(seriesUid);
+            if (series == null) return NotFound("Series not found");
+
+            var filePath = Path.Combine(series.StoragePath, filename);
+            if (!System.IO.File.Exists(filePath)) return NotFound("File not found");
+
+            return PhysicalFile(filePath, "application/octet-stream", filename);
+        }
+
+        /// <summary>
+        /// Legacy endpoint: serves transcoded DICOM files for the WADO image loader.
+        /// Kept for backward compatibility.
+        /// </summary>
         [HttpGet("image")]
         public async Task<IActionResult> GetDicomFile([FromQuery] string seriesUid, [FromQuery] string filename, [FromQuery] int frame = 0)
         {

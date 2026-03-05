@@ -1,4 +1,4 @@
-﻿using FellowOakDicom;
+using FellowOakDicom;
 using FellowOakDicom.Imaging;
 using RadiopaediaConnect.Data;
 using RadiopaediaConnect.Models;
@@ -55,43 +55,50 @@ namespace RadiopaediaConnect.Services
                 }
             }
 
+            // Build expanded frame list using the shared helper (same algorithm as metadata endpoint)
             var dicomFiles = Directory.GetFiles(dicomPath, "*.dcm");
-            var sortedFiles = new List<(int InstanceNumber, string FilePath)>();
-            foreach (var f in dicomFiles)
-            {
-                var df = await DicomFile.OpenAsync(f, FileReadOption.SkipLargeTags);
-                int instanceNum = df.Dataset.GetSingleValueOrDefault(DicomTag.InstanceNumber, 0);
-                sortedFiles.Add((instanceNum, f));
-            }
+            var fileInfos = await DicomFrameExpander.ScanFilesAsync(dicomFiles);
+            var expandedFrames = DicomFrameExpander.ExpandFrames(fileInfos);
 
+            _logger.LogInformation($"[Processor] Series {seriesDto.SeriesInstanceUid}: {dicomFiles.Length} files, {expandedFrames.Count} total frames");
+
+            // Apply Start/End/Step on the expanded frame list (1-based indices)
             int skipCount = Math.Max(0, seriesDto.Start - 1);
             int takeCount = Math.Max(0, seriesDto.End - seriesDto.Start + 1);
 
-            var targetFiles = sortedFiles
-                .OrderBy(x => x.InstanceNumber)
-                .Select(x => x.FilePath)
+            var targetFrames = expandedFrames
                 .Skip(skipCount)
                 .Take(takeCount)
                 .ToList();
 
             if (seriesDto.Step > 1)
-                targetFiles = targetFiles.Where((x, i) => i % seriesDto.Step == 0).ToList();
+                targetFrames = targetFrames.Where((x, i) => i % seriesDto.Step == 0).ToList();
 
-            for (int i = 0; i < targetFiles.Count; i++)
+            _logger.LogInformation($"[Processor] After selection (Start={seriesDto.Start}, End={seriesDto.End}, Step={seriesDto.Step}): {targetFrames.Count} frames to process");
+
+            // Render each frame to PNG
+            for (int i = 0; i < targetFrames.Count; i++)
             {
+                var frame = targetFrames[i];
                 string pngName = $"frame_{i:D4}.png";
                 string fullOutputPath = Path.Combine(outputPath, pngName);
-                await ProcessDicomWithImageSharpAsync(targetFiles[i], fullOutputPath, seriesDto.Redactions);
+                await ProcessDicomFrameWithImageSharpAsync(frame.FilePath, frame.FrameIndex, fullOutputPath, seriesDto.Redactions);
             }
 
             return outputPath;
         }
 
-        private async Task ProcessDicomWithImageSharpAsync(string dicomFile, string outputPath, List<RedactionZoneDto> redactions)
+        /// <summary>
+        /// Renders a specific frame from a DICOM file to PNG, applying redaction zones.
+        /// Uses fo-dicom's DicomImage.RenderImage(frameIndex) which handles all transfer syntaxes
+        /// including JPEG Lossless (via the registered ImageSharp manager + codecs).
+        /// </summary>
+        private async Task ProcessDicomFrameWithImageSharpAsync(
+            string dicomFile, int frameIndex, string outputPath, List<RedactionZoneDto> redactions)
         {
             var file = await DicomFile.OpenAsync(dicomFile);
             var dicomImage = new DicomImage(file.Dataset);
-            using (var image = dicomImage.RenderImage().AsSharpImage())
+            using (var image = dicomImage.RenderImage(frameIndex).AsSharpImage())
             {
                 image.ProcessPixelRows(accessor =>
                 {

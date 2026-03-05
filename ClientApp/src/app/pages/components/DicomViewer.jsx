@@ -5,6 +5,7 @@ import * as cornerstone from 'cornerstone-core';
 import * as cornerstoneMath from 'cornerstone-math';
 import * as cornerstoneTools from 'cornerstone-tools';
 import * as cornerstoneWADOImageLoader from 'cornerstone-wado-image-loader';
+import { registerCsdicomLoader } from '../../../lib/csdicomLoader';
 
 // Ensure external dependencies are linked
 cornerstoneTools.external.cornerstone = cornerstone;
@@ -12,6 +13,9 @@ cornerstoneTools.external.cornerstoneMath = cornerstoneMath;
 cornerstoneTools.external.Hammer = Hammer;
 cornerstoneWADOImageLoader.external.cornerstone = cornerstone;
 cornerstoneWADOImageLoader.external.dicomParser = dicomParser;
+
+// Register custom DICOM loader for raw byte decoding (csdicom: scheme)
+registerCsdicomLoader();
 
 // ensure tools init only runs once per session
 let isToolsInitialized = false;

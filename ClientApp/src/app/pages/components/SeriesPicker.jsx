@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import DicomViewer from './DicomViewer';
+import { clearFileCache } from '../../../lib/csdicomLoader';
+
+// Modalities where multiframe instances are common — require preview before checkbox selection
+const MULTIFRAME_MODALITIES = new Set(['US', 'XA', 'RF', 'NM', 'PT', 'IVUS', 'SC', 'OT']);
 
 const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }) => {
     const [activeSeries, setActiveSeries] = useState(null);
@@ -18,6 +22,9 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
     });
     const [previewImageIds, setPreviewImageIds] = useState([]);
 
+    // Metadata cache keyed by seriesInstanceUid (persists across series switches)
+    const [seriesMetadataMap, setSeriesMetadataMap] = useState({});
+
     // Redaction State
     const [isRedacting, setIsRedacting] = useState(false);
     const [hasRedactionSelected, setHasRedactionSelected] = useState(false);
@@ -31,10 +38,33 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
     const isDragging = useRef(null);
     const shouldAutoPreview = useRef(false);
 
+    // Active series metadata (from the per-series cache)
+    const activeMetadata = activeSeries ? seriesMetadataMap[activeSeries.seriesInstanceUid] : null;
+
+    // Use totalFrameCount from metadata when available, fall back to instanceCount
+    const effectiveFrameCount = activeMetadata?.totalFrameCount ?? activeSeries?.instanceCount ?? 0;
+
+    /**
+     * Fetches series metadata and builds csdicom: image IDs.
+     * Returns { ids, metadata } or null on failure.
+     */
+    const fetchMetadataAndBuildImageIds = async (seriesUid) => {
+        const res = await fetch(`/api/cornerstone/series/${seriesUid}/metadata`);
+        if (!res.ok) return null;
+        const metadata = await res.json();
+        const ids = metadata.expandedFrames.map(f =>
+            `csdicom:${seriesUid}|${f.fileName}|${f.frameIndex}`
+        );
+        return { ids, metadata };
+    };
+
     useEffect(() => {
         if (!activeSeries) return;
 
         let isMounted = true;
+
+        // Clear previous series' file cache to free memory
+        clearFileCache();
 
         setPreviewJob({ status: 'idle', serverStatus: '', jobId: null, error: null });
         setPreviewImageIds([]);
@@ -80,11 +110,13 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                     const result = await response.json();
 
                     if (result.status === 'Ready') {
-                        const imgRes = await fetch(`/api/cornerstone/series/${activeSeries.seriesInstanceUid}`);
-                        if (imgRes.ok && isMounted) {
-                            const ids = await imgRes.json();
-                            setPreviewImageIds(ids);
+                        const data = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid);
+                        if (data && isMounted) {
+                            setSeriesMetadataMap(prev => ({ ...prev, [activeSeries.seriesInstanceUid]: data.metadata }));
+                            setPreviewImageIds(data.ids);
                             setPreviewJob({ status: 'ready', serverStatus: 'Ready', jobId: null, error: null });
+                            // Auto-update slice config if frame count differs from instanceCount
+                            autoUpdateFrameCount(data.metadata, activeSeries, savedState);
                         }
                     } else {
                         setPreviewJob({ status: 'loading', serverStatus: result.status, jobId: result.jobId, error: null });
@@ -94,11 +126,12 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                 }
             } else {
                 try {
-                    const res = await fetch(`/api/cornerstone/series/${activeSeries.seriesInstanceUid}`);
-                    if (res.ok && isMounted) {
-                        const ids = await res.json();
-                        setPreviewImageIds(ids);
+                    const data = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid);
+                    if (data && isMounted) {
+                        setSeriesMetadataMap(prev => ({ ...prev, [activeSeries.seriesInstanceUid]: data.metadata }));
+                        setPreviewImageIds(data.ids);
                         setPreviewJob({ status: 'ready', serverStatus: 'Ready', jobId: null, error: null });
+                        autoUpdateFrameCount(data.metadata, activeSeries, savedState);
                     }
                 } catch (error) {
                     console.warn("Auto-preview check failed", error);
@@ -111,6 +144,36 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         return () => { isMounted = false; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeSeries]); // Dependency on activeSeries IDENTITY only
+
+    /**
+     * When metadata reveals totalFrameCount != instanceCount, auto-update
+     * the slice config end value and any saved selection.
+     */
+    const autoUpdateFrameCount = (metadata, series, savedState) => {
+        if (!metadata || metadata.totalFrameCount === series.instanceCount) return;
+
+        const totalFrames = metadata.totalFrameCount;
+
+        if (savedState) {
+            // If the saved end was the old instanceCount, extend to totalFrameCount
+            if (savedState.end === series.instanceCount) {
+                setSliceConfig(prev => ({ ...prev, end: totalFrames }));
+                onSeriesUpdate(series.seriesInstanceUid, {
+                    ...savedState,
+                    end: totalFrames,
+                    total: Math.floor((totalFrames - savedState.start) / savedState.step) + 1
+                }, 'select');
+            }
+        } else {
+            // No saved state: update the default end
+            setSliceConfig(prev => {
+                if (prev.end === series.instanceCount) {
+                    return { ...prev, end: totalFrames };
+                }
+                return prev;
+            });
+        }
+    };
 
     useEffect(() => {
         let intervalId;
@@ -126,11 +189,13 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                     if (data.status === 'Completed') {
                         clearInterval(intervalId);
                         try {
-                            const imgRes = await fetch(`/api/cornerstone/series/${activeSeries.seriesInstanceUid}`);
-                            if (!imgRes.ok) throw new Error("Failed to fetch image list");
-                            const ids = await imgRes.json();
-                            setPreviewImageIds(ids);
+                            const result = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid);
+                            if (!result) throw new Error("Failed to fetch image list");
+                            setSeriesMetadataMap(prev => ({ ...prev, [activeSeries.seriesInstanceUid]: result.metadata }));
+                            setPreviewImageIds(result.ids);
                             setPreviewJob(prev => ({ ...prev, status: 'ready', serverStatus: 'Completed' }));
+                            const savedState = selectedSeriesMap[activeSeries.seriesInstanceUid];
+                            autoUpdateFrameCount(result.metadata, activeSeries, savedState);
                         } catch {
                             setPreviewJob(prev => ({ ...prev, status: 'error', error: "Failed to load images" }));
                         }
@@ -144,6 +209,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
             }, 2000);
         }
         return () => { if (intervalId) clearInterval(intervalId); };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [previewJob.status, previewJob.jobId, activeSeries]);
 
     const handleSubsetSave = () => {
@@ -196,11 +262,13 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
 
     const handleCheckboxSelect = (series, isChecked) => {
         if (isChecked) {
-            if (series.instanceCount > 100) return;
+            const meta = seriesMetadataMap[series.seriesInstanceUid];
+            const trueFrameCount = meta?.totalFrameCount ?? series.instanceCount;
+            if (trueFrameCount > 100) return;
             shouldAutoPreview.current = false;
             setActiveSeries(series);
             onSeriesUpdate(series.seriesInstanceUid, {
-                start: 1, end: series.instanceCount, step: 1, total: series.instanceCount, redactions: []
+                start: 1, end: trueFrameCount, step: 1, total: trueFrameCount, redactions: []
             }, 'select');
         } else {
             onSeriesUpdate(series.seriesInstanceUid, null, 'deselect');
@@ -213,7 +281,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         if (isNaN(val) || val < 1) val = 1;
 
         if (activeSeries && (name === 'start' || name === 'end')) {
-            const max = activeSeries.instanceCount;
+            const max = effectiveFrameCount;
             const safeVal = Math.min(val, max);
             setCurrentFrameIndex(Math.max(0, safeVal - 1));
         }
@@ -222,7 +290,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
             const newConfig = { ...prev, [name]: val };
             if (activeSeries) {
                 if (name === 'start' && val > prev.end) newConfig.end = val;
-                if (name === 'end' && val > activeSeries.instanceCount) newConfig.end = activeSeries.instanceCount;
+                if (name === 'end' && val > effectiveFrameCount) newConfig.end = effectiveFrameCount;
                 if (name === 'end' && val < prev.start) newConfig.start = val;
             }
             return newConfig;
@@ -252,11 +320,13 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
 
             if (result.status === 'Ready') {
                 try {
-                    const imgRes = await fetch(`/api/cornerstone/series/${activeSeries.seriesInstanceUid}`);
-                    if (!imgRes.ok) throw new Error("Failed to fetch image list");
-                    const ids = await imgRes.json();
-                    setPreviewImageIds(ids);
+                    const data = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid);
+                    if (!data) throw new Error("Failed to fetch image list");
+                    setSeriesMetadataMap(prev => ({ ...prev, [activeSeries.seriesInstanceUid]: data.metadata }));
+                    setPreviewImageIds(data.ids);
                     setPreviewJob({ status: 'ready', serverStatus: 'Ready', jobId: null, error: null });
+                    const savedState = selectedSeriesMap[activeSeries.seriesInstanceUid];
+                    autoUpdateFrameCount(data.metadata, activeSeries, savedState);
                 } catch {
                     setPreviewJob({ status: 'error', jobId: null, error: "Failed to load cached images" });
                 }
@@ -285,7 +355,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         if (!timelineRef.current || !activeSeries) return;
         const rect = timelineRef.current.getBoundingClientRect();
         const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-        const total = activeSeries.instanceCount;
+        const total = effectiveFrameCount;
         const newIndex = Math.floor(pct * (total - 1));
         setCurrentFrameIndex(newIndex);
     };
@@ -295,7 +365,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
 
         const rect = timelineRef.current.getBoundingClientRect();
         const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        const total = activeSeries.instanceCount;
+        const total = effectiveFrameCount;
         const val = Math.floor(pct * total) + 1;
 
         if (isDragging.current === 'scrubber') {
@@ -324,13 +394,13 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         : 0;
     const isLocked = previewJob.status === 'loading';
     const isAlreadySelected = activeSeries && !!selectedSeriesMap[activeSeries.seriesInstanceUid];
-    const isSingleImage = activeSeries?.instanceCount === 1;
+    const isSingleImage = effectiveFrameCount <= 1;
 
     const hasChanges = activeSeries ? (isAlreadySelected
         ? (sliceConfig.start !== selectedSeriesMap[activeSeries.seriesInstanceUid].start ||
             sliceConfig.end !== selectedSeriesMap[activeSeries.seriesInstanceUid].end ||
             sliceConfig.step !== selectedSeriesMap[activeSeries.seriesInstanceUid].step)
-        : (sliceConfig.start !== 1 || sliceConfig.end !== activeSeries.instanceCount || sliceConfig.step !== 1)
+        : (sliceConfig.start !== 1 || sliceConfig.end !== effectiveFrameCount || sliceConfig.step !== 1)
     ) : false;
 
     const canSubmitSubset = activeSeries && currentSliceCount > 0 && currentSliceCount <= 100;
@@ -356,6 +426,9 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                 ? Math.floor((savedConfig.end - savedConfig.start) / savedConfig.step) + 1
                                 : series.instanceCount;
 
+                            // Per-series metadata from the cache
+                            const meta = seriesMetadataMap[series.seriesInstanceUid];
+
                             return (
                                 <li
                                     key={series.seriesInstanceUid}
@@ -369,13 +442,25 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                         ${isViewed ? 'bg-white dark:bg-slate-800 border-l-4 border-indigo-500' : 'border-l-4 border-transparent'}`}
                                 >
                                     <div className="pt-1" onClick={(e) => e.stopPropagation()}>
-                                        <input
-                                            type="checkbox"
-                                            checked={isSelected}
-                                            disabled={series.instanceCount > 100 || isLocked}
-                                            onChange={(e) => handleCheckboxSelect(series, e.target.checked)}
-                                            className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 disabled:opacity-50"
-                                        />
+                                        {(() => {
+                                            const trueCount = meta?.totalFrameCount ?? series.instanceCount;
+                                            const needsPreview = !meta && MULTIFRAME_MODALITIES.has(series.modality?.toUpperCase());
+                                            const tooMany = trueCount > 100;
+                                            const isDisabled = tooMany || isLocked || needsPreview;
+                                            const title = needsPreview
+                                                ? 'Preview this series first to determine frame count'
+                                                : tooMany ? `Too many frames (${trueCount} > 100)` : undefined;
+                                            return (
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isSelected}
+                                                    disabled={isDisabled}
+                                                    title={title}
+                                                    onChange={(e) => handleCheckboxSelect(series, e.target.checked)}
+                                                    className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 disabled:opacity-50"
+                                                />
+                                            );
+                                        })()}
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="flex justify-between items-start">
@@ -388,9 +473,20 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                                 <span className="text-xs bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-300 font-mono">
                                                     {series.modality}
                                                 </span>
+                                                {/* Multiframe badge (persists once metadata is loaded) */}
+                                                {meta?.hasMultiframe && (
+                                                    <span className="text-[10px] bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-bold">
+                                                        MULTI
+                                                    </span>
+                                                )}
                                             </div>
                                             <span className="text-xs text-slate-500">
-                                                {isSelected ? <span className="font-bold text-green-600">{finalCount}/{series.instanceCount} img</span> : `${series.instanceCount} img`}
+                                                {isSelected
+                                                    ? <span className="font-bold text-green-600">{finalCount}/{meta ? meta.totalFrameCount : series.instanceCount} frames</span>
+                                                    : (meta
+                                                        ? `${meta.totalFrameCount} frames / ${series.instanceCount} img`
+                                                        : `${series.instanceCount} img`)
+                                                }
                                             </span>
                                         </div>
                                     </div>
@@ -451,7 +547,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
 
                             {/* Overlay Info */}
                             <div className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded font-mono pointer-events-none z-20">
-                                Img: {currentFrameIndex + 1} / {activeSeries.instanceCount}
+                                Img: {currentFrameIndex + 1} / {effectiveFrameCount}
                             </div>
                         </div>
 
@@ -550,25 +646,25 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                         <div
                                             className="absolute top-0 bottom-0 bg-indigo-500/50"
                                             style={{
-                                                left: `${((sliceConfig.start - 1) / activeSeries.instanceCount) * 100}%`,
-                                                right: `${100 - ((sliceConfig.end) / activeSeries.instanceCount) * 100}%`
+                                                left: `${((sliceConfig.start - 1) / effectiveFrameCount) * 100}%`,
+                                                right: `${100 - ((sliceConfig.end) / effectiveFrameCount) * 100}%`
                                             }}
                                         />
                                     </div>
                                     {/* Start Handle */}
                                     <div
-                                        className={`absolute top-1/2 w-4 h-8 rounded shadow-md z-10 flex items-center justify-center -mt-4 -ml-2 transition-transform 
+                                        className={`absolute top-1/2 w-4 h-8 rounded shadow-md z-10 flex items-center justify-center -mt-4 -ml-2 transition-transform
                                             ${isSingleImage ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 cursor-ew-resize hover:scale-110'}`}
-                                        style={{ left: `${((sliceConfig.start - 1) / activeSeries.instanceCount) * 100}%` }}
+                                        style={{ left: `${((sliceConfig.start - 1) / effectiveFrameCount) * 100}%` }}
                                         onPointerDown={(e) => !isSingleImage && handleTimelinePointerDown(e, 'start')}
                                     >
                                         <div className="w-0.5 h-4 bg-white/50 rounded-full" />
                                     </div>
                                     {/* End Handle */}
                                     <div
-                                        className={`absolute top-1/2 w-4 h-8 rounded shadow-md z-10 flex items-center justify-center -mt-4 -ml-2 transition-transform 
+                                        className={`absolute top-1/2 w-4 h-8 rounded shadow-md z-10 flex items-center justify-center -mt-4 -ml-2 transition-transform
                                             ${isSingleImage ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 cursor-ew-resize hover:scale-110'}`}
-                                        style={{ left: `${(sliceConfig.end / activeSeries.instanceCount) * 100}%` }}
+                                        style={{ left: `${(sliceConfig.end / effectiveFrameCount) * 100}%` }}
                                         onPointerDown={(e) => !isSingleImage && handleTimelinePointerDown(e, 'end')}
                                     >
                                         <div className="w-0.5 h-4 bg-white/50 rounded-full" />
@@ -576,7 +672,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                     {/* Scrubber */}
                                     <div
                                         className="absolute top-0 bottom-0 w-0.5 bg-white border-x border-red-500 z-20 pointer-events-none transition-all duration-75"
-                                        style={{ left: `${(currentFrameIndex / (activeSeries.instanceCount - 1 || 1)) * 100}%` }}
+                                        style={{ left: `${(currentFrameIndex / (effectiveFrameCount - 1 || 1)) * 100}%` }}
                                     >
                                         <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-red-500 rounded-full shadow-sm" />
                                     </div>
