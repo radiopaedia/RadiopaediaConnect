@@ -368,3 +368,5 @@ FodyWeavers.xsd
 /radiopaedia-connect.tar
 /ClientApp/package-lock.json
 /ClientApp/yarn.lock
+/CLAUDE.md
+/nul
