@@ -129,6 +129,8 @@ namespace RadiopaediaConnect.Controllers
             return Ok(new { message = "Password changed successfully." });
         }
 
+        private const string SecretMask = "********";
+
         /// <summary>
         /// Get local settings (SCP, Radiopaedia, etc).
         /// </summary>
@@ -143,11 +145,11 @@ namespace RadiopaediaConnect.Controllers
                 storageScpAeTitle = settings.StorageScpAeTitle,
                 maxConcurrentDownloads = settings.MaxConcurrentDownloads,
                 radiopaediaClientId = settings.RadiopaediaClientId ?? "",
-                radiopaediaClientSecret = settings.RadiopaediaClientSecret ?? "",
+                radiopaediaClientSecret = string.IsNullOrEmpty(settings.RadiopaediaClientSecret) ? "" : SecretMask,
                 smtpHost = settings.SmtpHost ?? "",
                 smtpPort = settings.SmtpPort,
                 smtpUsername = settings.SmtpUsername ?? "",
-                smtpPassword = settings.SmtpPassword ?? "",
+                smtpPassword = string.IsNullOrEmpty(settings.SmtpPassword) ? "" : SecretMask,
                 smtpFromAddress = settings.SmtpFromAddress ?? "",
                 notificationRecipients = settings.NotificationRecipients ?? ""
             });
@@ -164,16 +166,19 @@ namespace RadiopaediaConnect.Controllers
             var previousSettings = await _repository.GetLocalSettingsAsync();
             bool scpChanged = previousSettings.StorageScpAeTitle != request.StorageScpAeTitle;
 
+            var newSecret = request.RadiopaediaClientSecret == SecretMask ? previousSettings.RadiopaediaClientSecret : request.RadiopaediaClientSecret;
+            var newSmtpPassword = request.SmtpPassword == SecretMask ? previousSettings.SmtpPassword : request.SmtpPassword;
+
             var entity = new LocalSettingsEntity
             {
                 StorageScpAeTitle = request.StorageScpAeTitle,
                 MaxConcurrentDownloads = request.MaxConcurrentDownloads,
                 RadiopaediaClientId = request.RadiopaediaClientId,
-                RadiopaediaClientSecret = request.RadiopaediaClientSecret,
+                RadiopaediaClientSecret = newSecret,
                 SmtpHost = request.SmtpHost,
                 SmtpPort = request.SmtpPort,
                 SmtpUsername = request.SmtpUsername,
-                SmtpPassword = request.SmtpPassword,
+                SmtpPassword = newSmtpPassword,
                 SmtpFromAddress = request.SmtpFromAddress,
                 NotificationRecipients = request.NotificationRecipients,
                 UpdatedAtUtc = DateTime.UtcNow.ToString("o")
@@ -187,8 +192,8 @@ namespace RadiopaediaConnect.Controllers
             var liveOptions = _oauthOptions.Get("Radiopaedia");
             if (!string.IsNullOrEmpty(request.RadiopaediaClientId))
                 liveOptions.ClientId = request.RadiopaediaClientId;
-            if (!string.IsNullOrEmpty(request.RadiopaediaClientSecret))
-                liveOptions.ClientSecret = request.RadiopaediaClientSecret;
+            if (!string.IsNullOrEmpty(newSecret))
+                liveOptions.ClientSecret = newSecret;
 
             _logger.LogInformation("[Settings] Local settings saved.");
 
