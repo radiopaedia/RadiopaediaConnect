@@ -10,6 +10,8 @@ namespace RadiopaediaConnect.Services
     {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly SettingsService _settingsService;
+        private readonly INotificationService _notificationService;
+        private readonly AppLogsRepository _logsRepository;
         private readonly ILogger<DicomQueueWorker> _logger;
 
         private readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(2);
@@ -17,14 +19,19 @@ namespace RadiopaediaConnect.Services
         private readonly TimeSpan _retentionPeriod = TimeSpan.FromMinutes(30);
 
         private DateTime _lastPurgeTime = DateTime.MinValue;
+        private int _lastActiveJobCount = -1;
 
         public DicomQueueWorker(
             IServiceScopeFactory scopeFactory,
             SettingsService settingsService,
+            INotificationService notificationService,
+            AppLogsRepository logsRepository,
             ILogger<DicomQueueWorker> logger)
         {
             _scopeFactory = scopeFactory;
             _settingsService = settingsService;
+            _notificationService = notificationService;
+            _logsRepository = logsRepository;
             _logger = logger;
         }
 
@@ -50,9 +57,13 @@ namespace RadiopaediaConnect.Services
                         int activeJobs = await repository.GetActiveJobCountAsync();
                         if (activeJobs >= settings.MaxConcurrentDownloads)
                         {
+                            if (_lastActiveJobCount < settings.MaxConcurrentDownloads)
+                                _logger.LogWarning("[QueueWorker] Concurrency limit reached ({Active}/{Max}), deferring new jobs", activeJobs, settings.MaxConcurrentDownloads);
+                            _lastActiveJobCount = activeJobs;
                             await Task.Delay(_pollInterval, stoppingToken);
                             continue;
                         }
+                        _lastActiveJobCount = activeJobs;
 
                         var job = await repository.ClaimNextJobAsync();
                         if (job == null)
@@ -61,6 +72,7 @@ namespace RadiopaediaConnect.Services
                             continue;
                         }
 
+                        _logger.LogInformation("[QueueWorker] Claimed job {JobId} ({Type})", job.Id, job.Type);
                         _ = Task.Run(() => ProcessJobWrapperAsync(job), stoppingToken);
                     }
                 }
@@ -94,7 +106,11 @@ namespace RadiopaediaConnect.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"[QueueWorker] Fatal error in job wrapper for {job.Id}");
+                _logger.LogError(ex, "[QueueWorker] Fatal error in job wrapper for {JobId}", job.Id);
+                await _notificationService.SendAsync(
+                    $"Job {job.Id} failed unexpectedly",
+                    $"Job: {job.Id}\nType: {job.Type}\nError: {ex.Message}\n\n{ex.StackTrace}",
+                    job.Id.ToString());
             }
         }
 
@@ -113,11 +129,16 @@ namespace RadiopaediaConnect.Services
                 await processor.ProcessCaseAsync(caseId);
 
                 await repository.CompleteJobAsync(job.Id, true, "Upload Successful");
+                _logger.LogInformation("[QueueWorker] Job {JobId} completed successfully", job.Id);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"[Upload Worker] Failed to process case {caseId}");
+                _logger.LogError(ex, "[Upload Worker] Failed to process case {CaseId}", caseId);
                 await repository.CompleteJobAsync(job.Id, false, ex.Message);
+                await _notificationService.SendAsync(
+                    $"Upload failed: Case {caseId}",
+                    $"Case: {caseId}\nJob: {job.Id}\nError: {ex.Message}\n\n{ex.StackTrace}",
+                    job.Id.ToString());
             }
         }
 
@@ -222,6 +243,12 @@ namespace RadiopaediaConnect.Services
                     await repository.DeleteOldJobsAsync(_retentionPeriod);
                 }
                 catch (Exception ex) { _logger.LogError(ex, "DB Jobs Purge Error"); }
+
+                try
+                {
+                    await _logsRepository.PruneOldLogsAsync(30);
+                }
+                catch (Exception ex) { _logger.LogError(ex, "App Logs Purge Error"); }
 
                 try
                 {

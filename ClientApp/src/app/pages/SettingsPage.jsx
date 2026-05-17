@@ -1,12 +1,14 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import { getAdminPassword, clearAdminPassword } from './AdminPasswordModal';
+import LogsTab from './components/LogsTab';
 
 const TABS = [
     { id: 'scp', label: 'DICOM SCP' },
     { id: 'nodes', label: 'Remote Nodes' },
     { id: 'radiopaedia', label: 'Radiopaedia' },
     { id: 'notifications', label: 'Notifications' },
+    { id: 'logs', label: 'Logs' },
     { id: 'password', label: 'Change Password' },
 ];
 
@@ -41,6 +43,11 @@ const SettingsPage = () => {
     // Password change state
     const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
     const [passwordError, setPasswordError] = useState('');
+
+    // Notifications state
+    const [recipientInput, setRecipientInput] = useState('');
+    const [testEmailStatus, setTestEmailStatus] = useState(null);
+    const [testingEmail, setTestingEmail] = useState(false);
 
     const apiHeaders = useCallback(() => ({
         'Content-Type': 'application/json',
@@ -231,6 +238,55 @@ const SettingsPage = () => {
             setEchoResults((prev) => ({ ...prev, [key]: { success: false, message: 'Request failed.' } }));
         } finally {
             setEchoLoading((prev) => ({ ...prev, [key]: false }));
+        }
+    };
+
+    const parsedRecipients = () =>
+        (localSettings.notificationRecipients || '')
+            .split(',')
+            .map((r) => r.trim())
+            .filter((r) => r.includes('@'));
+
+    const handleAddRecipient = () => {
+        const email = recipientInput.trim();
+        if (!email.includes('@')) return;
+        const existing = parsedRecipients();
+        if (existing.includes(email)) return;
+        setLocalSettings((s) => ({
+            ...s,
+            notificationRecipients: [...existing, email].join(', '),
+        }));
+        setRecipientInput('');
+    };
+
+    const handleRemoveRecipient = (email) => {
+        const updated = parsedRecipients().filter((r) => r !== email);
+        setLocalSettings((s) => ({ ...s, notificationRecipients: updated.join(', ') }));
+    };
+
+    const handleTestEmail = async () => {
+        setTestingEmail(true);
+        setTestEmailStatus(null);
+        try {
+            const res = await fetch('/api/notifications/test', {
+                method: 'POST',
+                headers: apiHeaders(),
+                body: JSON.stringify({
+                    subject: 'RadiopaediaConnect SMTP Test',
+                    body: 'This is a test notification from RadiopaediaConnect. Your SMTP configuration is working correctly.',
+                }),
+            });
+            if (res.ok) {
+                setTestEmailStatus({ ok: true, message: 'Test email sent successfully.' });
+            } else {
+                const data = await res.json().catch(() => ({}));
+                setTestEmailStatus({ ok: false, message: data.message || 'Failed to send test email.' });
+            }
+        } catch {
+            setTestEmailStatus({ ok: false, message: 'Request failed.' });
+        } finally {
+            setTestingEmail(false);
+            setTimeout(() => setTestEmailStatus(null), 6000);
         }
     };
 
@@ -617,91 +673,171 @@ const SettingsPage = () => {
 
                     {/* ── Notifications Tab ───────────────────────── */}
                     {activeTab === 'notifications' && (
-                        <div className="space-y-6">
+                        <div className="space-y-8">
+                            {/* SMTP Configuration */}
                             <div>
                                 <h2 className="text-lg font-semibold mb-1">Email Notifications</h2>
-                                <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-md">
-                                    <svg className="w-5 h-5 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                                    </svg>
-                                    <p className="text-sm text-amber-800 dark:text-amber-200">
-                                        This feature is coming soon. Configure your SMTP settings now and they will be used when notifications are enabled.
-                                    </p>
+                                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                                    Configure SMTP to receive alerts when pipeline jobs fail or errors occur.
+                                </p>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">SMTP Host</label>
+                                        <input
+                                            type="text"
+                                            value={localSettings.smtpHost}
+                                            onChange={(e) => setLocalSettings((s) => ({ ...s, smtpHost: e.target.value }))}
+                                            className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
+                                            placeholder="smtp.example.com"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">SMTP Port</label>
+                                        <input
+                                            type="number"
+                                            value={localSettings.smtpPort || ''}
+                                            onChange={(e) => setLocalSettings((s) => ({ ...s, smtpPort: parseInt(e.target.value, 10) || null }))}
+                                            className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
+                                            placeholder="587"
+                                        />
+                                        <p className="mt-1 text-xs text-slate-400">SSL is auto-enabled on ports 587 and 465.</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Username</label>
+                                        <input
+                                            type="text"
+                                            value={localSettings.smtpUsername}
+                                            onChange={(e) => setLocalSettings((s) => ({ ...s, smtpUsername: e.target.value }))}
+                                            className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1">Password</label>
+                                        <input
+                                            type="password"
+                                            value={localSettings.smtpPassword}
+                                            onChange={(e) => setLocalSettings((s) => ({ ...s, smtpPassword: e.target.value }))}
+                                            className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
+                                        />
+                                    </div>
+                                    <div className="sm:col-span-2">
+                                        <label className="block text-sm font-medium mb-1">From Address</label>
+                                        <input
+                                            type="email"
+                                            value={localSettings.smtpFromAddress}
+                                            onChange={(e) => setLocalSettings((s) => ({ ...s, smtpFromAddress: e.target.value }))}
+                                            className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
+                                            placeholder="noreply@example.com"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 flex items-center gap-3 flex-wrap">
+                                    <button
+                                        onClick={handleSaveLocal}
+                                        disabled={saving}
+                                        className="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                                    >
+                                        {saving ? 'Saving...' : 'Save SMTP Settings'}
+                                    </button>
+                                    <button
+                                        onClick={handleTestEmail}
+                                        disabled={testingEmail || !localSettings.smtpHost}
+                                        className="px-5 py-2 text-sm font-medium rounded-md border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                                    >
+                                        {testingEmail ? 'Sending...' : 'Send Test Email'}
+                                    </button>
+                                    {testEmailStatus && (
+                                        <span className={`text-sm font-medium ${testEmailStatus.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                            {testEmailStatus.ok ? '\u2713' : '\u2717'} {testEmailStatus.message}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 opacity-80">
-                                <div>
-                                    <label className="block text-sm font-medium mb-1">SMTP Host</label>
-                                    <input
-                                        type="text"
-                                        value={localSettings.smtpHost}
-                                        onChange={(e) => setLocalSettings((s) => ({ ...s, smtpHost: e.target.value }))}
-                                        className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
-                                        placeholder="smtp.example.com"
-                                    />
+                            {/* Notification Recipients */}
+                            <div className="pt-6 border-t border-slate-200 dark:border-slate-700">
+                                <h3 className="text-base font-semibold mb-1">Notification Recipients</h3>
+                                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                                    Emails sent to these addresses on job failures and pipeline errors.
+                                </p>
+
+                                {/* Recipient chips */}
+                                <div className="flex flex-wrap gap-2 mb-3 min-h-[2rem]">
+                                    {parsedRecipients().length === 0 && (
+                                        <span className="text-sm text-slate-400 italic">No recipients added.</span>
+                                    )}
+                                    {parsedRecipients().map((email) => (
+                                        <span
+                                            key={email}
+                                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-300"
+                                        >
+                                            {email}
+                                            <button
+                                                onClick={() => handleRemoveRecipient(email)}
+                                                className="hover:text-indigo-600 dark:hover:text-indigo-200 leading-none text-base font-bold"
+                                                title="Remove"
+                                            >
+                                                &times;
+                                            </button>
+                                        </span>
+                                    ))}
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium mb-1">SMTP Port</label>
-                                    <input
-                                        type="number"
-                                        value={localSettings.smtpPort || ''}
-                                        onChange={(e) => setLocalSettings((s) => ({ ...s, smtpPort: parseInt(e.target.value, 10) || null }))}
-                                        className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
-                                        placeholder="587"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium mb-1">Username</label>
-                                    <input
-                                        type="text"
-                                        value={localSettings.smtpUsername}
-                                        onChange={(e) => setLocalSettings((s) => ({ ...s, smtpUsername: e.target.value }))}
-                                        className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium mb-1">Password</label>
-                                    <input
-                                        type="password"
-                                        value={localSettings.smtpPassword}
-                                        onChange={(e) => setLocalSettings((s) => ({ ...s, smtpPassword: e.target.value }))}
-                                        className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium mb-1">From Address</label>
+
+                                <div className="flex gap-2 max-w-md">
                                     <input
                                         type="email"
-                                        value={localSettings.smtpFromAddress}
-                                        onChange={(e) => setLocalSettings((s) => ({ ...s, smtpFromAddress: e.target.value }))}
-                                        className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
-                                        placeholder="noreply@example.com"
+                                        value={recipientInput}
+                                        onChange={(e) => setRecipientInput(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleAddRecipient()}
+                                        className="flex-1 rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
+                                        placeholder="admin@example.com"
                                     />
+                                    <button
+                                        onClick={handleAddRecipient}
+                                        disabled={!recipientInput.includes('@')}
+                                        className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                                    >
+                                        Add
+                                    </button>
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium mb-1">Notification Recipients</label>
-                                    <input
-                                        type="text"
-                                        value={localSettings.notificationRecipients}
-                                        onChange={(e) => setLocalSettings((s) => ({ ...s, notificationRecipients: e.target.value }))}
-                                        className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
-                                        placeholder="admin@example.com, ops@example.com"
-                                    />
-                                    <p className="mt-1 text-xs text-slate-400">Comma-separated email addresses.</p>
+
+                                <div className="mt-4">
+                                    <button
+                                        onClick={handleSaveLocal}
+                                        disabled={saving}
+                                        className="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                                    >
+                                        {saving ? 'Saving...' : 'Save Recipients'}
+                                    </button>
                                 </div>
                             </div>
 
-                            <div className="pt-4 border-t border-slate-200 dark:border-slate-700">
-                                <button
-                                    onClick={handleSaveLocal}
-                                    disabled={saving}
-                                    className="px-6 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                                >
-                                    {saving ? 'Saving...' : 'Save Notification Settings'}
-                                </button>
+                            {/* Trigger info */}
+                            <div className="pt-6 border-t border-slate-200 dark:border-slate-700">
+                                <h3 className="text-base font-semibold mb-3">When notifications are sent</h3>
+                                <ul className="space-y-1.5 text-sm text-slate-600 dark:text-slate-400">
+                                    <li className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                                        Upload job fails unexpectedly
+                                    </li>
+                                    <li className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                                        Pipeline error during case processing
+                                    </li>
+                                    <li className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-orange-400 flex-shrink-0" />
+                                        Fatal error in job wrapper
+                                    </li>
+                                </ul>
                             </div>
                         </div>
+                    )}
+
+                    {/* ── Logs Tab ────────────────────────────────── */}
+                    {activeTab === 'logs' && (
+                        <LogsTab adminPassword={adminPassword} />
                     )}
 
                     {/* ── Change Password Tab ────────────────────── */}

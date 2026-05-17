@@ -101,6 +101,22 @@ namespace RadiopaediaConnect.Data
             EnsureColumnExists(conn, "DraftCases", "PatientName", "TEXT");
             EnsureColumnExists(conn, "DraftCases", "PatientId", "TEXT");
             EnsureColumnExists(conn, "DraftCases", "PatientDob", "TEXT");
+
+            var createAppLogsSql = @"
+                CREATE TABLE IF NOT EXISTS AppLogs (
+                    Id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    TimestampUtc TEXT    NOT NULL,
+                    Level        TEXT    NOT NULL,
+                    Category     TEXT    NOT NULL,
+                    Message      TEXT    NOT NULL,
+                    Exception    TEXT,
+                    JobId        TEXT
+                );
+                CREATE INDEX IF NOT EXISTS IX_AppLogs_TimestampUtc ON AppLogs(TimestampUtc);
+                CREATE INDEX IF NOT EXISTS IX_AppLogs_Level        ON AppLogs(Level);
+            ";
+
+            conn.Execute(createAppLogsSql);
         }
 
         private static void EnsureColumnExists(SqliteConnection conn, string tableName, string columnName, string columnDef)

@@ -15,17 +15,20 @@ namespace RadiopaediaConnect.Services
         private readonly DicomScu _dicomScu;
         private readonly DicomRepository _repository;
         private readonly RadiopaediaApiClient _apiClient;
+        private readonly INotificationService _notificationService;
         private readonly ILogger<CaseProcessorService> _logger;
 
         public CaseProcessorService(
             DicomScu dicomScu,
             DicomRepository repository,
             RadiopaediaApiClient apiClient,
+            INotificationService notificationService,
             ILogger<CaseProcessorService> logger)
         {
             _dicomScu = dicomScu;
             _repository = repository;
             _apiClient = apiClient;
+            _notificationService = notificationService;
             _logger = logger;
 
             var processingRoot = _repository.GetProcessingRoot();
@@ -50,6 +53,8 @@ namespace RadiopaediaConnect.Services
                 while (!Directory.Exists(dicomPath) || !Directory.EnumerateFiles(dicomPath, "*.dcm").Any())
                 {
                     if (attempts >= 60) throw new Exception($"Timeout waiting for DICOM files at {dicomPath}");
+                    if (attempts > 0 && attempts % 10 == 0)
+                        _logger.LogInformation("[PIPELINE] Waiting for DICOM files at {Path}, attempt {Attempt}/60", dicomPath, attempts);
                     await Task.Delay(1000);
                     attempts++;
                 }
@@ -74,7 +79,12 @@ namespace RadiopaediaConnect.Services
             if (seriesDto.Step > 1)
                 targetFrames = targetFrames.Where((x, i) => i % seriesDto.Step == 0).ToList();
 
-            _logger.LogInformation($"[Processor] After selection (Start={seriesDto.Start}, End={seriesDto.End}, Step={seriesDto.Step}): {targetFrames.Count} frames to process");
+            if (seriesDto.Step > 1 && targetFrames.Count == 0)
+                _logger.LogWarning("[PIPELINE] Series {SeriesUid} produced 0 frames after filtering (Start={Start}, End={End}, Step={Step})",
+                    seriesDto.SeriesInstanceUid, seriesDto.Start, seriesDto.End, seriesDto.Step);
+            else
+                _logger.LogInformation("[Processor] After selection (Start={Start}, End={End}, Step={Step}): {Count} frames to process",
+                    seriesDto.Start, seriesDto.End, seriesDto.Step, targetFrames.Count);
 
             // Render each frame to PNG
             for (int i = 0; i < targetFrames.Count; i++)
@@ -84,6 +94,8 @@ namespace RadiopaediaConnect.Services
                 string fullOutputPath = Path.Combine(outputPath, pngName);
                 await ProcessDicomFrameWithImageSharpAsync(frame.FilePath, frame.FrameIndex, fullOutputPath, seriesDto.Redactions);
             }
+
+            _logger.LogInformation("[PIPELINE] Series {SeriesUid}: rendered {Count} PNG frames", seriesDto.SeriesInstanceUid, targetFrames.Count);
 
             return outputPath;
         }
@@ -178,16 +190,17 @@ namespace RadiopaediaConnect.Services
                             string zipPath = Path.Combine(_repository.GetProcessingRoot(), $"{series.SeriesInstanceUid}.zip");
                             if (File.Exists(zipPath)) File.Delete(zipPath);
 
+                            _logger.LogInformation("[PIPELINE] Creating ZIP for series {SeriesUid}", series.SeriesInstanceUid);
                             ZipFile.CreateFromDirectory(processedFolder, zipPath, CompressionLevel.Fastest, false);
 
-                            _logger.LogInformation($"[PIPELINE] Uploading Series {series.SeriesInstanceUid} to Study {rStudyId}");
+                            _logger.LogInformation("[PIPELINE] Uploading series {SeriesUid} to study {RStudyId}", series.SeriesInstanceUid, rStudyId);
                             await _apiClient.UploadStudyZipAsync(rCaseId, rStudyId, zipPath, username);
 
                             if (File.Exists(zipPath)) File.Delete(zipPath);
                         }
                         else
                         {
-                            _logger.LogWarning($"[PIPELINE] No PNGs generated for {series.SeriesInstanceUid}");
+                            _logger.LogWarning("[PIPELINE] No PNGs generated for {SeriesUid} — series will be skipped", series.SeriesInstanceUid);
                         }
 
                         if (Directory.Exists(processedFolder)) Directory.Delete(processedFolder, true);
@@ -203,10 +216,14 @@ namespace RadiopaediaConnect.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"[PIPELINE] FAILED! Case {caseId} error: {ex.Message}");
+                _logger.LogError(ex, "[PIPELINE] FAILED! Case {CaseId} error: {Message}", caseId, ex.Message);
 
                 // Update status to Failed with error message, preserve any existing Radiopaedia ID
                 await _repository.UpdateCaseStatusAsync(caseId, "Failed", rCaseId, ex.Message);
+
+                await _notificationService.SendAsync(
+                    $"Pipeline failed: Case {caseId}",
+                    $"Case ID: {caseId}\nRadiopaedia Case ID: {rCaseId ?? "not created"}\nError: {ex.Message}\n\n{ex.StackTrace}");
 
                 throw;
             }

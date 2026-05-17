@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using RadiopaediaConnect.Data;
 using RadiopaediaConnect.Extensions;
+using RadiopaediaConnect.Logging;
 using RadiopaediaConnect.Services;
 using RadiopaediaConnect.Services.Dicom;
 using System.Runtime.InteropServices;
@@ -55,9 +56,13 @@ namespace RadiopaediaConnect
             builder.Services.AddSingleton<UserRepository>();
             builder.Services.AddSingleton<DicomRepository>(sp => new DicomRepository(connectionString));
             builder.Services.AddSingleton<SettingsRepository>(sp => new SettingsRepository(connectionString));
+            builder.Services.AddSingleton<AppLogsRepository>(sp => new AppLogsRepository(connectionString));
 
             // Register SettingsService (singleton with caching)
             builder.Services.AddSingleton<SettingsService>();
+
+            // Register notification service
+            builder.Services.AddSingleton<INotificationService, SmtpNotificationService>();
 
             // Register DicomScpManager (replaces old DicomScp)
             builder.Services.AddSingleton<DicomScpManager>();
@@ -78,6 +83,11 @@ namespace RadiopaediaConnect
             DbInitializer.Initialize(connectionString);
             DicomDbInitializer.Initialize(connectionString);
             SettingsDbInitializer.Initialize(connectionString);
+
+            // Wire persistent database logger
+            var logRepo = app.Services.GetRequiredService<AppLogsRepository>();
+            var dbLogProvider = new DatabaseLoggerProvider(logRepo);
+            app.Services.GetRequiredService<ILoggerFactory>().AddProvider(dbLogProvider);
 
             // Start the DICOM SCP
             var scpManager = app.Services.GetRequiredService<DicomScpManager>();

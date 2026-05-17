@@ -96,9 +96,10 @@ namespace RadiopaediaConnect.Services.Dicom
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"[C-FIND] Search failed on {nodeName}.");
+                _logger.LogError(ex, "[C-FIND] Study search failed on {NodeName}", nodeName);
             }
 
+            _logger.LogInformation("[C-FIND] Study search on {NodeName} returned {Count} result(s)", nodeName, results.Count);
             return results.OrderByDescending(r => r.StudyDate).ToList();
         }
 
@@ -139,9 +140,10 @@ namespace RadiopaediaConnect.Services.Dicom
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"[C-FIND Series] Failed on {nodeName}.");
+                _logger.LogError(ex, "[C-FIND] Series search failed on {NodeName}", nodeName);
             }
 
+            _logger.LogInformation("[C-FIND] Series search for study {StudyUid} on {NodeName} returned {Count} series", studyInstanceUid, nodeName, results.Count);
             return results.OrderBy(r => r.SeriesNumber).ToList();
         }
 

@@ -21,9 +21,11 @@ namespace RadiopaediaConnect.Services.Dicom
 
             var storagePath = _repository.GetStorageRoot();
             if (!Directory.Exists(storagePath))
-            {
                 Directory.CreateDirectory(storagePath);
-            }
+
+            var dicomRoot = _repository.GetDicomRoot();
+            if (!Directory.Exists(dicomRoot))
+                Directory.CreateDirectory(dicomRoot);
         }
 
         public string CurrentAeTitle => _currentAeTitle;
@@ -130,6 +132,7 @@ namespace RadiopaediaConnect.Services.Dicom
 
                 var filePath = Path.Combine(seriesFolder, $"{sopUid}.dcm");
                 await request.File.SaveAsync(filePath);
+                Logger.LogInformation("[SCP] Stored DICOM: {SeriesUid}/{SopUid}.dcm", seriesUid, sopUid);
 
                 return new DicomCStoreResponse(request, DicomStatus.Success);
             }

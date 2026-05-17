@@ -1,4 +1,5 @@
-﻿using System.Net.Http.Headers;
+﻿using System.Diagnostics;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -59,13 +60,19 @@ namespace RadiopaediaConnect.Services
 
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            _logger.LogInformation($"[API] Creating Case '{draft.Title}' for user {username}...");
+            _logger.LogInformation("[API] Creating Case '{Title}' for user {Username}...", draft.Title, username);
+            var sw = Stopwatch.StartNew();
             var response = await _httpClient.PostAsync("cases", content);
+            sw.Stop();
             var respString = await response.Content.ReadAsStringAsync();
+            _logger.LogInformation("[API] POST cases completed in {Ms}ms -> {Status}", sw.ElapsedMilliseconds, (int)response.StatusCode);
+
+            if ((int)response.StatusCode == 429)
+                _logger.LogWarning("[API] Rate limited (429) by Radiopaedia on CreateCase");
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError($"[API] Create Case Failed: {response.StatusCode} - {respString}");
+                _logger.LogError("[API] Create Case Failed: {StatusCode} - {Response}", response.StatusCode, respString);
                 throw new HttpRequestException($"Radiopaedia API Error: {response.ReasonPhrase}");
             }
 
@@ -92,14 +99,20 @@ namespace RadiopaediaConnect.Services
             var json = JsonSerializer.Serialize(payload);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-            _logger.LogInformation($"[API] Creating Study ({studyDto.Modality}) for Case {radiopaediaCaseId}...");
+            _logger.LogInformation("[API] Creating Study ({Modality}) for Case {CaseId}...", studyDto.Modality, radiopaediaCaseId);
 
+            var sw = Stopwatch.StartNew();
             var response = await _httpClient.PostAsync($"cases/{radiopaediaCaseId}/studies", content);
+            sw.Stop();
             var respString = await response.Content.ReadAsStringAsync();
+            _logger.LogInformation("[API] POST studies completed in {Ms}ms -> {Status}", sw.ElapsedMilliseconds, (int)response.StatusCode);
+
+            if ((int)response.StatusCode == 429)
+                _logger.LogWarning("[API] Rate limited (429) by Radiopaedia on CreateStudy");
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError($"[API] Create Study Failed: {respString}");
+                _logger.LogError("[API] Create Study Failed: {Response}", respString);
                 throw new HttpRequestException($"Radiopaedia API Error: {response.ReasonPhrase}");
             }
 
@@ -130,16 +143,22 @@ namespace RadiopaediaConnect.Services
                 FileName = fileName
             };
 
+            var sw = Stopwatch.StartNew();
             var response = await _httpClient.PostAsync($"cases/{caseId}/studies/{studyId}/images", content);
+            sw.Stop();
+            _logger.LogInformation("[API] POST images completed in {Ms}ms -> {Status}", sw.ElapsedMilliseconds, (int)response.StatusCode);
+
+            if ((int)response.StatusCode == 429)
+                _logger.LogWarning("[API] Rate limited (429) by Radiopaedia on UploadZip");
 
             if (!response.IsSuccessStatusCode)
             {
                 var err = await response.Content.ReadAsStringAsync();
-                _logger.LogError($"[API] Upload Failed: {err}");
+                _logger.LogError("[API] Upload Failed: {Error}", err);
                 throw new Exception($"Zip Upload Failed: {response.StatusCode}");
             }
 
-            _logger.LogInformation("[API] Zip Upload Successful!");
+            _logger.LogInformation("[API] Zip upload successful for Case {CaseId} / Study {StudyId}", caseId, studyId);
         }
 
         public async Task MarkUploadFinishedAsync(string caseId, string username)
