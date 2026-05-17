@@ -325,7 +325,8 @@ namespace RadiopaediaConnect.Controllers
             try
             {
                 var settings = await _settingsService.GetDicomSettingsAsync();
-                scpManager.Restart(settings.Scp.AeTitle);
+                var allowedAeTitles = settings.RemoteNodes.Select(n => n.AeTitle).Where(ae => !string.IsNullOrWhiteSpace(ae));
+                scpManager.Restart(settings.Scp.AeTitle, allowedAeTitles);
                 return Ok(new { message = "SCP restarted successfully." });
             }
             catch (Exception ex)

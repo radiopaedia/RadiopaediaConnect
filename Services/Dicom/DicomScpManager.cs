@@ -30,7 +30,7 @@ namespace RadiopaediaConnect.Services.Dicom
 
         public string CurrentAeTitle => _currentAeTitle;
 
-        public void Start(string aeTitle)
+        public void Start(string aeTitle, IEnumerable<string>? allowedCallingAeTitles = null)
         {
             lock (_lock)
             {
@@ -39,9 +39,16 @@ namespace RadiopaediaConnect.Services.Dicom
                 _logger.LogInformation($"[DICOM] Starting SCP '{aeTitle}' on Port 104");
                 _logger.LogInformation($"[DICOM] Storage Root: {_repository.GetStorageRoot()}");
 
-                // Store the AE Title and repository so the service class can access them
                 CStoreService.StaticRepository = _repository;
                 CStoreService.ConfiguredAeTitle = aeTitle;
+                CStoreService.AllowedCallingAeTitles = allowedCallingAeTitles is not null
+                    ? new HashSet<string>(allowedCallingAeTitles, StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                if (CStoreService.AllowedCallingAeTitles.Count == 0)
+                    _logger.LogWarning("[DICOM] No allowed calling AE titles configured — accepting connections from any AE title.");
+                else
+                    _logger.LogInformation("[DICOM] Allowed calling AE titles: {AETitles}", string.Join(", ", CStoreService.AllowedCallingAeTitles));
 
                 _server = DicomServerFactory.Create<CStoreService>(104);
             }
@@ -61,7 +68,7 @@ namespace RadiopaediaConnect.Services.Dicom
             }
         }
 
-        public void Restart(string aeTitle)
+        public void Restart(string aeTitle, IEnumerable<string>? allowedCallingAeTitles = null)
         {
             _logger.LogInformation($"[DICOM] Restarting SCP with AE Title '{aeTitle}'...");
             Stop();
@@ -69,7 +76,7 @@ namespace RadiopaediaConnect.Services.Dicom
             // Brief pause to allow the port to be released
             Thread.Sleep(500);
 
-            Start(aeTitle);
+            Start(aeTitle, allowedCallingAeTitles);
             _logger.LogInformation("[DICOM] SCP restarted.");
         }
     }
@@ -78,6 +85,7 @@ namespace RadiopaediaConnect.Services.Dicom
     {
         internal static DicomRepository? StaticRepository;
         internal static string ConfiguredAeTitle = "RCONNECT_SCP";
+        internal static HashSet<string> AllowedCallingAeTitles = new(StringComparer.OrdinalIgnoreCase);
 
         public CStoreService(INetworkStream stream, Encoding fallbackEncoding, ILogger log, DicomServiceDependencies dependencies)
             : base(stream, fallbackEncoding, log, dependencies)
@@ -86,7 +94,18 @@ namespace RadiopaediaConnect.Services.Dicom
 
         public Task OnReceiveAssociationRequestAsync(DicomAssociation association)
         {
-            Logger.LogInformation($"[SCP] Incoming connection from {association.CallingAE}");
+            var callingAe = association.CallingAE?.Trim() ?? "";
+
+            if (AllowedCallingAeTitles.Count > 0 && !AllowedCallingAeTitles.Contains(callingAe))
+            {
+                Logger.LogWarning("[SCP] Rejected association from unknown AE title '{CallingAE}'", callingAe);
+                return SendAssociationRejectAsync(
+                    DicomRejectResult.Permanent,
+                    DicomRejectSource.ServiceUser,
+                    DicomRejectReason.CallingAENotRecognized);
+            }
+
+            Logger.LogInformation("[SCP] Accepted association from '{CallingAE}'", callingAe);
             foreach (var pc in association.PresentationContexts)
             {
                 if (pc.AbstractSyntax == DicomUID.Verification ||

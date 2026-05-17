@@ -97,8 +97,10 @@ namespace RadiopaediaConnect
                 var settingsRepo = app.Services.GetRequiredService<SettingsRepository>();
                 var localSettings = settingsRepo.GetLocalSettingsAsync().GetAwaiter().GetResult();
                 var aeTitle = localSettings.StorageScpAeTitle ?? "RCONNECT_SCP";
+                var remoteNodes = settingsRepo.GetRemoteNodesAsync().GetAwaiter().GetResult();
+                var allowedAeTitles = remoteNodes.Select(n => n.AeTitle).Where(ae => !string.IsNullOrWhiteSpace(ae));
 
-                scpManager.Start(aeTitle);
+                scpManager.Start(aeTitle, allowedAeTitles);
             }
             catch (Exception ex)
             {
