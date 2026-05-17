@@ -1,19 +1,20 @@
 using Microsoft.AspNetCore.Mvc;
 using RadiopaediaConnect.Data;
+using RadiopaediaConnect.Services;
 
 namespace RadiopaediaConnect.Controllers
 {
     [ApiController]
     [Route("api/logs")]
-    public class LogsController : ControllerBase
+    public class LogsController : AdminControllerBase
     {
         private readonly AppLogsRepository _logsRepository;
-        private readonly SettingsRepository _settingsRepository;
+        private readonly AdminSessionService _sessionService;
 
-        public LogsController(AppLogsRepository logsRepository, SettingsRepository settingsRepository)
+        public LogsController(AppLogsRepository logsRepository, AdminSessionService sessionService)
         {
             _logsRepository = logsRepository;
-            _settingsRepository = settingsRepository;
+            _sessionService = sessionService;
         }
 
         [HttpGet]
@@ -24,7 +25,7 @@ namespace RadiopaediaConnect.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 100)
         {
-            if (!await AuthorizeAdminAsync()) return Unauthorized(new { message = "Invalid admin password." });
+            if (!AuthorizeAdmin(_sessionService)) return Unauthorized(new { message = "Invalid admin session." });
 
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 1;
@@ -54,18 +55,9 @@ namespace RadiopaediaConnect.Controllers
         [HttpDelete]
         public async Task<IActionResult> PruneLogs([FromQuery] int retentionDays = 30)
         {
-            if (!await AuthorizeAdminAsync()) return Unauthorized(new { message = "Invalid admin password." });
+            if (!AuthorizeAdmin(_sessionService)) return Unauthorized(new { message = "Invalid admin session." });
             await _logsRepository.PruneOldLogsAsync(retentionDays);
             return Ok(new { message = $"Logs older than {retentionDays} days deleted." });
-        }
-
-        private async Task<bool> AuthorizeAdminAsync()
-        {
-            var password = Request.Headers["X-Admin-Password"].FirstOrDefault();
-            if (string.IsNullOrEmpty(password)) return false;
-            var hash = await _settingsRepository.GetPasswordHashAsync();
-            if (string.IsNullOrEmpty(hash)) return false;
-            return BCrypt.Net.BCrypt.Verify(password, hash);
         }
     }
 }

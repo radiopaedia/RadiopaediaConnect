@@ -63,6 +63,7 @@ namespace RadiopaediaConnect
 
             // Register notification service
             builder.Services.AddSingleton<INotificationService, SmtpNotificationService>();
+            builder.Services.AddSingleton<AdminSessionService>();
 
             // Register DicomScpManager (replaces old DicomScp)
             builder.Services.AddSingleton<DicomScpManager>();

@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { setAdminPassword } from './AdminPasswordModal';
 
 const SetupPage = () => {
     const navigate = useNavigate();
@@ -60,7 +59,6 @@ const SetupPage = () => {
             });
 
             if (res.ok) {
-                setAdminPassword(password);
                 navigate('/settings');
             } else {
                 const data = await res.json();

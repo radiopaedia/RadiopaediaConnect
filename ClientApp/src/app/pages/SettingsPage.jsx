@@ -1,6 +1,5 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router';
-import { getAdminPassword, clearAdminPassword } from './AdminPasswordModal';
 import LogsTab from './components/LogsTab';
 
 const TABS = [
@@ -14,7 +13,6 @@ const TABS = [
 
 const SettingsPage = () => {
     const navigate = useNavigate();
-    const [adminPassword, setAdminPasswordState] = useState('');
     const [authorized, setAuthorized] = useState(false);
     const [activeTab, setActiveTab] = useState('scp');
     const [saving, setSaving] = useState(false);
@@ -51,44 +49,29 @@ const SettingsPage = () => {
 
     const apiHeaders = useCallback(() => ({
         'Content-Type': 'application/json',
-        'X-Admin-Password': adminPassword,
-    }), [adminPassword]);
+    }), []);
 
-    // On mount, read password from sessionStorage and verify
+    // On mount, check if session cookie is still valid
     useEffect(() => {
-        const stored = getAdminPassword();
-        if (!stored) {
-            navigate('/');
-            return;
-        }
-
-        const verify = async () => {
+        const checkSession = async () => {
             try {
-                const res = await fetch('/api/settings/password/verify', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: stored }),
-                });
-
+                const res = await fetch('/api/settings/session');
                 if (res.ok) {
-                    setAdminPasswordState(stored);
                     setAuthorized(true);
                 } else {
-                    clearAdminPassword();
                     navigate('/');
                 }
             } catch {
-                clearAdminPassword();
                 navigate('/');
             }
         };
 
-        verify();
+        checkSession();
     }, [navigate]);
 
     // Load settings once authorized
     useEffect(() => {
-        if (!authorized || !adminPassword) return;
+        if (!authorized) return;
 
         const loadSettings = async () => {
             try {
@@ -98,7 +81,6 @@ const SettingsPage = () => {
                 ]);
 
                 if (localRes.status === 401 || nodesRes.status === 401) {
-                    clearAdminPassword();
                     navigate('/');
                     return;
                 }
@@ -117,15 +99,15 @@ const SettingsPage = () => {
         };
 
         loadSettings();
-    }, [authorized, adminPassword, apiHeaders, navigate]);
+    }, [authorized, apiHeaders, navigate]);
 
     const showMessage = (text, isError = false) => {
         setSaveMessage({ text, isError });
         setTimeout(() => setSaveMessage(null), 4000);
     };
 
-    const handleBackToApp = () => {
-        clearAdminPassword();
+    const handleBackToApp = async () => {
+        await fetch('/api/settings/logout', { method: 'POST' });
         navigate('/');
     };
 
@@ -313,9 +295,8 @@ const SettingsPage = () => {
             });
 
             if (res.ok) {
-                showMessage('Password changed. You will need to re-enter it next time.');
+                showMessage('Password changed successfully.');
                 setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-                clearAdminPassword();
             } else {
                 const data = await res.json();
                 setPasswordError(data.message || 'Failed to change password.');
@@ -837,7 +818,7 @@ const SettingsPage = () => {
 
                     {/* ── Logs Tab ────────────────────────────────── */}
                     {activeTab === 'logs' && (
-                        <LogsTab adminPassword={adminPassword} />
+                        <LogsTab />
                     )}
 
                     {/* ── Change Password Tab ────────────────────── */}

@@ -62,7 +62,7 @@ const columns = [
     }),
 ];
 
-const LogsTab = ({ adminPassword }) => {
+const LogsTab = () => {
     const [logs, setLogs]               = useState([]);
     const [totalCount, setTotalCount]   = useState(0);
     const [totalPages, setTotalPages]   = useState(1);
@@ -82,9 +82,7 @@ const LogsTab = ({ adminPassword }) => {
             if (endDate)   params.set('endDate', endDate);
             if (levelFilter) params.set('level', levelFilter);
 
-            const res = await fetch(`/api/logs?${params}`, {
-                headers: { 'X-Admin-Password': adminPassword },
-            });
+            const res = await fetch(`/api/logs?${params}`);
             if (res.ok) {
                 const data = await res.json();
                 setLogs(data.items ?? []);
@@ -96,7 +94,7 @@ const LogsTab = ({ adminPassword }) => {
         } finally {
             setLoading(false);
         }
-    }, [adminPassword, page, pageSize, startDate, endDate, levelFilter]);
+    }, [page, pageSize, startDate, endDate, levelFilter]);
 
     useEffect(() => {
         fetchLogs();

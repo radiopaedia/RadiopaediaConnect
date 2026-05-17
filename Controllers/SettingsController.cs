@@ -12,26 +12,29 @@ namespace RadiopaediaConnect.Controllers
 {
     [ApiController]
     [Route("api/settings")]
-    public class SettingsController : ControllerBase
+    public class SettingsController : AdminControllerBase
     {
         private readonly SettingsRepository _repository;
         private readonly SettingsService _settingsService;
         private readonly OAuthCredentialsCache _oauthCache;
         private readonly IOptionsMonitor<OAuthOptions> _oauthOptions;
         private readonly ILogger<SettingsController> _logger;
+        private readonly AdminSessionService _sessionService;
 
         public SettingsController(
             SettingsRepository repository,
             SettingsService settingsService,
             OAuthCredentialsCache oauthCache,
             IOptionsMonitor<OAuthOptions> oauthOptions,
-            ILogger<SettingsController> logger)
+            ILogger<SettingsController> logger,
+            AdminSessionService sessionService)
         {
             _repository = repository;
             _settingsService = settingsService;
             _oauthCache = oauthCache;
             _oauthOptions = oauthOptions;
             _logger = logger;
+            _sessionService = sessionService;
         }
 
         /// <summary>
@@ -73,6 +76,7 @@ namespace RadiopaediaConnect.Controllers
             await _repository.SetPasswordAsync(hash);
 
             _logger.LogInformation("[Settings] Admin password set for the first time.");
+            SetAdminSessionCookie(_sessionService);
             return Ok(new { message = "Admin password configured successfully." });
         }
 
@@ -83,11 +87,23 @@ namespace RadiopaediaConnect.Controllers
         public async Task<IActionResult> VerifyPassword([FromBody] VerifyPasswordRequest request)
         {
             if (!await VerifyAdminPasswordAsync(request.Password))
-            {
                 return Unauthorized(new { message = "Invalid admin password." });
-            }
 
+            SetAdminSessionCookie(_sessionService);
             return Ok(new { message = "Password verified." });
+        }
+
+        [HttpGet("session")]
+        public IActionResult CheckSession()
+        {
+            return AuthorizeAdmin(_sessionService) ? Ok() : Unauthorized();
+        }
+
+        [HttpPost("logout")]
+        public IActionResult Logout()
+        {
+            ClearAdminSessionCookie(_sessionService);
+            return Ok();
         }
 
         /// <summary>
@@ -336,12 +352,8 @@ namespace RadiopaediaConnect.Controllers
             }
         }
 
-        private async Task<bool> AuthorizeAdminAsync()
-        {
-            var password = Request.Headers["X-Admin-Password"].FirstOrDefault();
-            if (string.IsNullOrEmpty(password)) return false;
-            return await VerifyAdminPasswordAsync(password);
-        }
+        private Task<bool> AuthorizeAdminAsync()
+            => Task.FromResult(AuthorizeAdmin(_sessionService));
 
         private async Task<bool> VerifyAdminPasswordAsync(string? password)
         {

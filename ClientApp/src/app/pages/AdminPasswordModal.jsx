@@ -1,19 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 
-const ADMIN_PW_KEY = 'rconnect_admin_pw';
-
-export const setAdminPassword = (password) => {
-    sessionStorage.setItem(ADMIN_PW_KEY, password);
-};
-
-export const getAdminPassword = () => {
-    return sessionStorage.getItem(ADMIN_PW_KEY) || '';
-};
-
-export const clearAdminPassword = () => {
-    sessionStorage.removeItem(ADMIN_PW_KEY);
-};
 
 const RecoveryPanel = ({ onCancel }) => {
     const navigate = useNavigate();
@@ -45,9 +32,9 @@ const RecoveryPanel = ({ onCancel }) => {
             });
 
             if (res.ok) {
-                // Password has been cleared server-side; reset session and
-                // redirect to the first-run setup page to create a new password.
-                clearAdminPassword();
+                // Password has been cleared server-side; invalidate any active session
+                // and redirect to the first-run setup page to create a new password.
+                await fetch('/api/settings/logout', { method: 'POST' });
                 navigate('/setup');
             } else {
                 const data = await res.json().catch(() => ({}));
@@ -141,7 +128,6 @@ const AdminPasswordModal = ({ isOpen, onClose, onSuccess }) => {
             });
 
             if (res.ok) {
-                setAdminPassword(password);
                 onSuccess();
             } else {
                 setError('Incorrect password.');

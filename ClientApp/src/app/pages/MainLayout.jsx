@@ -2,7 +2,7 @@ import { Outlet, useNavigate } from 'react-router';
 import { Menu, Transition } from '@headlessui/react';
 import { Fragment, useState, useCallback } from 'react';
 import RadiopaediaLogo from '../../app/Radiopaedia-logo-only-transparent.png';
-import AdminPasswordModal, { getAdminPassword } from './AdminPasswordModal';
+import AdminPasswordModal from './AdminPasswordModal';
 
 const MainLayout = ({ children, user, onLogout, settingsStatus }) => {
     const navigate = useNavigate();
@@ -38,9 +38,9 @@ const MainLayout = ({ children, user, onLogout, settingsStatus }) => {
         navigate('/');
     };
 
-    const handleSettingsClick = () => {
-        // Skip the password prompt if the admin password is already held in session
-        if (getAdminPassword()) {
+    const handleSettingsClick = async () => {
+        const res = await fetch('/api/settings/session');
+        if (res.ok) {
             navigate('/settings');
         } else {
             setShowPasswordModal(true);
