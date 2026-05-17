@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using RadiopaediaConnect.Models;
 using System.Data;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace RadiopaediaConnect.Data
 {
@@ -36,9 +37,18 @@ namespace RadiopaediaConnect.Data
 
         public string GetProcessingRoot() => Path.Combine(GetStorageRoot(), "processing");
 
+        private static readonly Regex _dicomUidRegex = new(@"^[0-9.]{1,64}$", RegexOptions.Compiled);
+
+        public static string SanitizeDicomUid(string uid)
+        {
+            if (!_dicomUidRegex.IsMatch(uid))
+                throw new ArgumentException($"Invalid DICOM UID: '{uid}'");
+            return uid;
+        }
+
         public string GetSeriesStoragePath(string studyUid, string seriesUid)
         {
-            return Path.Combine(GetDicomRoot(), studyUid, seriesUid);
+            return Path.Combine(GetDicomRoot(), SanitizeDicomUid(studyUid), SanitizeDicomUid(seriesUid));
         }
 
         public async Task<SubmitCaseDto?> GetFullDraftCaseAsync(Guid caseId)

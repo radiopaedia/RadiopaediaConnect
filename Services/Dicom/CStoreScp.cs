@@ -88,9 +88,21 @@ namespace RadiopaediaConnect.Services.Dicom
                 }
 
                 var dataset = request.File.Dataset;
-                var studyUid = dataset.GetSingleValueOrDefault(DicomTag.StudyInstanceUID, "UNKNOWN");
-                var seriesUid = dataset.GetSingleValueOrDefault(DicomTag.SeriesInstanceUID, "UNKNOWN");
-                var sopUid = dataset.GetSingleValueOrDefault(DicomTag.SOPInstanceUID, "UNKNOWN");
+                var studyUid = dataset.GetSingleValueOrDefault(DicomTag.StudyInstanceUID, "");
+                var seriesUid = dataset.GetSingleValueOrDefault(DicomTag.SeriesInstanceUID, "");
+                var sopUid = dataset.GetSingleValueOrDefault(DicomTag.SOPInstanceUID, "");
+
+                try
+                {
+                    studyUid = RadiopaediaConnect.Data.DicomRepository.SanitizeDicomUid(studyUid);
+                    seriesUid = RadiopaediaConnect.Data.DicomRepository.SanitizeDicomUid(seriesUid);
+                    sopUid = RadiopaediaConnect.Data.DicomRepository.SanitizeDicomUid(sopUid);
+                }
+                catch (ArgumentException ex)
+                {
+                    Logger.LogWarning("[SCP] Rejected C-STORE with invalid UID: {Message}", ex.Message);
+                    return new DicomCStoreResponse(request, DicomStatus.InvalidAttributeValue);
+                }
 
                 var seriesFolder = _staticRepository.GetSeriesStoragePath(studyUid, seriesUid);
 
