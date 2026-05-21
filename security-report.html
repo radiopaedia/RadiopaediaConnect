@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Assessment Report - RadiopaediaConnect</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Georgia', 'Times New Roman', serif;
+            font-size: 14px;
+            line-height: 1.7;
+            color: #1a1a2e;
+            background: #f4f4f0;
+        }
+
+        .page-wrapper {
+            max-width: 960px;
+            margin: 40px auto;
+            background: #fff;
+            box-shadow: 0 2px 20px rgba(0,0,0,0.12);
+        }
+
+        /* Cover */
+        .cover {
+            background: linear-gradient(160deg, #0f2d5c 0%, #1a4a8a 60%, #1e5fa8 100%);
+            color: #fff;
+            padding: 70px 60px 60px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cover::after {
+            content: '';
+            position: absolute;
+            bottom: -60px;
+            right: -60px;
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.04);
+        }
+
+        .cover-label {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: #7eb4f0;
+            margin-bottom: 24px;
+        }
+
+        .cover h1 {
+            font-family: 'Georgia', serif;
+            font-size: 36px;
+            font-weight: normal;
+            line-height: 1.2;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+
+        .cover h2 {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 16px;
+            font-weight: 400;
+            color: #a8ccf0;
+            margin-bottom: 50px;
+        }
+
+        .cover-meta {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 1px solid rgba(255,255,255,0.15);
+        }
+
+        .cover-meta-item label {
+            display: block;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: #7eb4f0;
+            margin-bottom: 4px;
+        }
+
+        .cover-meta-item span {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 13px;
+            color: #d4e8ff;
+        }
+
+        /* Content area */
+        .content {
+            padding: 60px;
+        }
+
+        /* Section headings */
+        h2.section-title {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: #1a4a8a;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #1a4a8a;
+        }
+
+        h3.sub-title {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 15px;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin: 28px 0 10px;
+        }
+
+        p {
+            margin-bottom: 14px;
+            color: #333;
+        }
+
+        .section {
+            margin-bottom: 50px;
+        }
+
+        /* Summary table */
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 13px;
+        }
+
+        .summary-table th {
+            background: #0f2d5c;
+            color: #fff;
+            padding: 10px 14px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .summary-table td {
+            padding: 10px 14px;
+            border-bottom: 1px solid #e8e8e8;
+            vertical-align: top;
+        }
+
+        .summary-table tr:nth-child(even) td {
+            background: #f8f9fc;
+        }
+
+        .summary-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Severity badges */
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 3px;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .badge-critical { background: #fce8e8; color: #b71c1c; border: 1px solid #e57373; }
+        .badge-high     { background: #fff3e0; color: #e65100; border: 1px solid #ffb74d; }
+        .badge-medium   { background: #fff8e1; color: #f57f17; border: 1px solid #ffd54f; }
+        .badge-fixed    { background: #e8f5e9; color: #2e7d32; border: 1px solid #81c784; }
+        .badge-info     { background: #e3f2fd; color: #0d47a1; border: 1px solid #64b5f6; }
+
+        /* Finding cards */
+        .finding {
+            border: 1px solid #dde3ee;
+            border-radius: 6px;
+            margin-bottom: 36px;
+            overflow: hidden;
+        }
+
+        .finding-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 18px 22px;
+            background: #f5f7fc;
+            border-bottom: 1px solid #dde3ee;
+            gap: 16px;
+        }
+
+        .finding-header-left {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+        }
+
+        .finding-number {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #0f2d5c;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        .finding-number.critical { background: #b71c1c; }
+        .finding-number.high     { background: #e65100; }
+        .finding-number.medium   { background: #f57f17; }
+
+        .finding-title {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 15px;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 3px;
+        }
+
+        .finding-location {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #555;
+        }
+
+        .finding-body {
+            padding: 22px;
+        }
+
+        .finding-body h4 {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: #1a4a8a;
+            margin: 18px 0 8px;
+        }
+
+        .finding-body h4:first-child {
+            margin-top: 0;
+        }
+
+        .finding-body p {
+            margin-bottom: 10px;
+        }
+
+        /* Code blocks */
+        .code-compare {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 12px 0;
+        }
+
+        .code-panel {
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .code-panel-label {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            padding: 6px 12px;
+        }
+
+        .code-panel.before .code-panel-label { background: #fce8e8; color: #b71c1c; }
+        .code-panel.after  .code-panel-label { background: #e8f5e9; color: #2e7d32; }
+
+        pre {
+            font-family: 'Courier New', monospace;
+            font-size: 11.5px;
+            line-height: 1.6;
+            padding: 14px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .code-panel.before pre { background: #fff8f8; border: 1px solid #f5c6c6; }
+        .code-panel.after  pre { background: #f6fff7; border: 1px solid #b2dfdb; }
+
+        code {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            background: #f0f2f7;
+            padding: 1px 5px;
+            border-radius: 3px;
+            color: #1a4a8a;
+        }
+
+        /* Risk summary bar */
+        .risk-bar {
+            background: #f5f7fc;
+            border: 1px solid #dde3ee;
+            border-radius: 6px;
+            padding: 20px 24px;
+            margin: 20px 0;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            text-align: center;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+        }
+
+        .risk-bar-item .risk-count {
+            font-size: 32px;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+
+        .risk-bar-item .risk-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #666;
+        }
+
+        .risk-bar-item.critical .risk-count { color: #b71c1c; }
+        .risk-bar-item.high     .risk-count { color: #e65100; }
+        .risk-bar-item.resolved .risk-count { color: #2e7d32; }
+        .risk-bar-item.total    .risk-count { color: #0f2d5c; }
+
+        /* Info box */
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #1a4a8a;
+            padding: 14px 18px;
+            margin: 14px 0;
+            border-radius: 0 4px 4px 0;
+        }
+
+        .info-box p {
+            margin: 0;
+            font-size: 13px;
+            color: #1a3a6a;
+        }
+
+        .warn-box {
+            background: #fff3e0;
+            border-left: 4px solid #e65100;
+            padding: 14px 18px;
+            margin: 14px 0;
+            border-radius: 0 4px 4px 0;
+        }
+
+        .warn-box p {
+            margin: 0;
+            font-size: 13px;
+            color: #7a3200;
+        }
+
+        /* Divider */
+        hr {
+            border: none;
+            border-top: 1px solid #e0e4ed;
+            margin: 40px 0;
+        }
+
+        /* Footer */
+        .footer {
+            background: #f5f7fc;
+            border-top: 1px solid #dde3ee;
+            padding: 24px 60px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 11px;
+            color: #888;
+        }
+
+        ul.findings-list {
+            padding-left: 20px;
+            margin: 10px 0;
+        }
+
+        ul.findings-list li {
+            margin-bottom: 6px;
+            color: #333;
+        }
+
+        .scope-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            font-size: 13px;
+            margin: 16px 0;
+        }
+
+        .scope-table th {
+            background: #f0f2f7;
+            color: #1a1a2e;
+            padding: 9px 14px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            border-bottom: 2px solid #dde3ee;
+        }
+
+        .scope-table td {
+            padding: 9px 14px;
+            border-bottom: 1px solid #edf0f7;
+            vertical-align: top;
+        }
+
+        @media print {
+            body { background: #fff; }
+            .page-wrapper { box-shadow: none; margin: 0; max-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+<div class="page-wrapper">
+
+    <!-- Cover -->
+    <div class="cover">
+        <div class="cover-label">Confidential Security Report</div>
+        <h1>Security Assessment Report</h1>
+        <h2>RadiopaediaConnect Application</h2>
+
+        <div class="cover-meta">
+            <div class="cover-meta-item">
+                <label>Report Date</label>
+                <span>17 May 2026</span>
+            </div>
+            <div class="cover-meta-item">
+                <label>Assessment Type</label>
+                <span>Source Code Security Review</span>
+            </div>
+            <div class="cover-meta-item">
+                <label>Application</label>
+                <span>RadiopaediaConnect v1.x</span>
+            </div>
+            <div class="cover-meta-item">
+                <label>Review Status</label>
+                <span>All Findings Remediated</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+
+        <!-- Executive Summary -->
+        <div class="section">
+            <h2 class="section-title">1. Executive Summary</h2>
+            <p>
+                A targeted security review was conducted against the RadiopaediaConnect source code prior to deployment
+                in a hospital environment. RadiopaediaConnect is an ASP.NET Core application that acts as a bridge
+                between a hospital PACS system and the Radiopaedia.org platform, receiving DICOM images via a
+                C-STORE SCP listener and uploading curated cases through the Radiopaedia API.
+            </p>
+            <p>
+                The review identified five confirmed vulnerabilities ranging from Critical to High severity. All five
+                have been remediated within the same development cycle. The application is considered hardened and
+                suitable for deployment following the changes described in this report.
+            </p>
+
+            <div class="risk-bar">
+                <div class="risk-bar-item critical">
+                    <div class="risk-count">1</div>
+                    <div class="risk-label">Critical</div>
+                </div>
+                <div class="risk-bar-item high">
+                    <div class="risk-count">4</div>
+                    <div class="risk-label">High</div>
+                </div>
+                <div class="risk-bar-item resolved">
+                    <div class="risk-count">5</div>
+                    <div class="risk-label">Resolved</div>
+                </div>
+                <div class="risk-bar-item total">
+                    <div class="risk-count">0</div>
+                    <div class="risk-label">Outstanding</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scope -->
+        <div class="section">
+            <h2 class="section-title">2. Scope and Methodology</h2>
+            <p>
+                The review was conducted as a white-box source code analysis. All backend C# controllers,
+                services, and data access components were examined, along with the React frontend. The focus
+                was on vulnerability categories with direct exploitation potential given the application's deployment
+                context: a hospital LAN with access to patient DICOM data and credentials for external services.
+            </p>
+
+            <table class="scope-table">
+                <thead>
+                    <tr>
+                        <th>Component</th>
+                        <th>Technology</th>
+                        <th>Coverage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>HTTP API</td>
+                        <td>ASP.NET Core 10 controllers</td>
+                        <td>Full review</td>
+                    </tr>
+                    <tr>
+                        <td>DICOM SCP</td>
+                        <td>fo-dicom (FellowOak.Dicom)</td>
+                        <td>Full review</td>
+                    </tr>
+                    <tr>
+                        <td>Authentication layer</td>
+                        <td>Custom BCrypt password, session cookie</td>
+                        <td>Full review</td>
+                    </tr>
+                    <tr>
+                        <td>Data layer</td>
+                        <td>SQLite via Dapper</td>
+                        <td>Full review</td>
+                    </tr>
+                    <tr>
+                        <td>Frontend</td>
+                        <td>React 19 / Vite</td>
+                        <td>Auth flows and API call patterns</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <p>
+                Denial-of-service and resource exhaustion scenarios were excluded from scope as they are addressed
+                through network-level controls outside the application. Third-party library version auditing was
+                also excluded and is assumed to be handled by a separate dependency management process.
+            </p>
+        </div>
+
+        <!-- Findings -->
+        <div class="section">
+            <h2 class="section-title">3. Findings</h2>
+
+            <!-- Finding 1 -->
+            <div class="finding">
+                <div class="finding-header">
+                    <div class="finding-header-left">
+                        <div class="finding-number critical">1</div>
+                        <div>
+                            <div class="finding-title">Unauthenticated DICOM C-MOVE Trigger Endpoint</div>
+                            <div class="finding-location">Controllers/DebugController.cs &mdash; POST /api/debug/test-cmove</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-shrink:0;">
+                        <span class="badge badge-critical">Critical</span>
+                        <span class="badge badge-fixed">Resolved</span>
+                    </div>
+                </div>
+                <div class="finding-body">
+                    <h4>Description</h4>
+                    <p>
+                        A debug controller was present in the production codebase that exposed a
+                        <code>POST /api/debug/test-cmove</code> endpoint. The endpoint accepted a
+                        <code>StudyUid</code>, <code>SeriesUid</code>, and <code>RemoteNode</code> in the
+                        request body and directly invoked <code>DicomScu.TriggerCMoveAsync</code>, which issued
+                        a DICOM C-MOVE command to the specified PACS node. The controller carried no
+                        authentication attribute, and no global authorization policy was applied via
+                        <code>app.MapControllers()</code>.
+                    </p>
+                    <p>
+                        A default value of <code>"SANTESRV1"</code> was hardcoded as the fallback remote node,
+                        indicating the endpoint was written against a real hospital PACS rather than a test fixture.
+                    </p>
+
+                    <h4>Exploit Scenario</h4>
+                    <p>
+                        Any unauthenticated client with network access to the server could send the following
+                        request and cause the PACS to begin pushing the specified study to the application's
+                        SCP listener, from which the attacker could read or exfiltrate patient DICOM files:
+                    </p>
+                    <div class="code-compare">
+                        <div class="code-panel before" style="grid-column: span 2;">
+                            <div class="code-panel-label">Vulnerable code (removed)</div>
+                            <pre>[ApiController]
+[Route("api/[controller]")]
+public class DebugController : ControllerBase
+{
+    [HttpPost("test-cmove")]
+    public async Task&lt;IActionResult&gt; TestCMove(
+        [FromBody] TestMoveRequest request)
+    {
+        if (string.IsNullOrEmpty(request.RemoteNode))
+            request.RemoteNode = "SANTESRV1";  // production node hardcoded
+
+        var success = await _dicomScu.TriggerCMoveAsync(
+            request.StudyUid,
+            request.SeriesUid ?? "",
+            request.RemoteNode);
+
+        // No authentication. Accessible anonymously.
+        return success ? Ok(...) : BadRequest(...);
+    }
+}</pre>
+                        </div>
+                    </div>
+
+                    <h4>Remediation</h4>
+                    <p>
+                        The entire <code>DebugController.cs</code> file was deleted. Debug tooling of this nature
+                        should not be present in a production codebase. Any future diagnostic capability
+                        requiring DICOM operations must be gated behind the admin authentication mechanism.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Finding 2 -->
+            <div class="finding">
+                <div class="finding-header">
+                    <div class="finding-header-left">
+                        <div class="finding-number high">2</div>
+                        <div>
+                            <div class="finding-title">Path Traversal via Unsanitized DICOM UIDs</div>
+                            <div class="finding-location">Services/Dicom/DicomScpManager.cs &mdash; OnCStoreRequestAsync</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-shrink:0;">
+                        <span class="badge badge-high">High</span>
+                        <span class="badge badge-fixed">Resolved</span>
+                    </div>
+                </div>
+                <div class="finding-body">
+                    <h4>Description</h4>
+                    <p>
+                        When a C-STORE request was received by the DICOM SCP, three DICOM tag values were read
+                        directly from the inbound dataset and passed without validation into <code>Path.Combine</code>
+                        to construct the storage file path:
+                    </p>
+                    <ul class="findings-list">
+                        <li><code>StudyInstanceUID</code> was used as a directory name</li>
+                        <li><code>SeriesInstanceUID</code> was used as a subdirectory name</li>
+                        <li><code>SOPInstanceUID</code> was used as the filename stem</li>
+                    </ul>
+                    <p>
+                        DICOM UIDs are expected to contain only numeric digits and dots (<code>[0-9.]</code>),
+                        however the application performed no validation of this constraint. A malicious DICOM
+                        client could supply UID values containing path traversal sequences, causing files to
+                        be written outside the intended storage directory. The same vulnerability existed in
+                        a second SCP implementation in <code>CStoreScp.cs</code>.
+                    </p>
+
+                    <h4>Exploit Scenario</h4>
+                    <p>
+                        A DICOM client connecting to port 104 sends a C-STORE with crafted UID values. On Linux,
+                        this could write arbitrary files with attacker-controlled content to sensitive filesystem
+                        locations. The severity is compounded by Finding 3, which shows the SCP accepted
+                        connections from any client without AE title verification.
+                    </p>
+
+                    <div class="code-compare">
+                        <div class="code-panel before">
+                            <div class="code-panel-label">Before</div>
+                            <pre>var studyUid  = dataset.GetSingleValueOrDefault(
+    DicomTag.StudyInstanceUID, "UNKNOWN");
+var seriesUid = dataset.GetSingleValueOrDefault(
+    DicomTag.SeriesInstanceUID, "UNKNOWN");
+var sopUid    = dataset.GetSingleValueOrDefault(
+    DicomTag.SOPInstanceUID, "UNKNOWN");
+
+// No validation. UID used directly in path.
+var folder = StaticRepository
+    .GetSeriesStoragePath(studyUid, seriesUid);
+var filePath = Path.Combine(
+    folder, $"{sopUid}.dcm");</pre>
+                        </div>
+                        <div class="code-panel after">
+                            <div class="code-panel-label">After</div>
+                            <pre>var studyUid  = dataset.GetSingleValueOrDefault(
+    DicomTag.StudyInstanceUID, "");
+var seriesUid = dataset.GetSingleValueOrDefault(
+    DicomTag.SeriesInstanceUID, "");
+var sopUid    = dataset.GetSingleValueOrDefault(
+    DicomTag.SOPInstanceUID, "");
+
+try {
+    studyUid  = DicomRepository
+        .SanitizeDicomUid(studyUid);
+    seriesUid = DicomRepository
+        .SanitizeDicomUid(seriesUid);
+    sopUid    = DicomRepository
+        .SanitizeDicomUid(sopUid);
+} catch (ArgumentException ex) {
+    Logger.LogWarning(
+        "[SCP] Rejected C-STORE: {Msg}",
+        ex.Message);
+    return new DicomCStoreResponse(request,
+        DicomStatus.InvalidAttributeValue);
+}</pre>
+                        </div>
+                    </div>
+
+                    <h4>Remediation</h4>
+                    <p>
+                        A <code>SanitizeDicomUid</code> static method was added to <code>DicomRepository</code>.
+                        It validates the UID against the regex pattern <code>^[0-9.]{1,64}$</code> and throws
+                        an <code>ArgumentException</code> on any non-conforming value. Both C-STORE handlers
+                        now call this for all three UID fields before any filesystem operation is attempted.
+                        A non-conforming UID results in a DICOM <code>InvalidAttributeValue</code> rejection
+                        response, which is the correct protocol-level response for this condition.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Finding 3 -->
+            <div class="finding">
+                <div class="finding-header">
+                    <div class="finding-header-left">
+                        <div class="finding-number high">3</div>
+                        <div>
+                            <div class="finding-title">DICOM SCP Accepts Connections from Any AE Title</div>
+                            <div class="finding-location">Services/Dicom/DicomScpManager.cs &mdash; OnReceiveAssociationRequestAsync</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-shrink:0;">
+                        <span class="badge badge-high">High</span>
+                        <span class="badge badge-fixed">Resolved</span>
+                    </div>
+                </div>
+                <div class="finding-body">
+                    <h4>Description</h4>
+                    <p>
+                        The DICOM SCP's association request handler accepted every inbound connection
+                        unconditionally. The calling AE title was logged but never compared against any
+                        configured allowlist. A <code>ConfiguredAeTitle</code> static field existed on the
+                        service class but was never consulted during the association negotiation.
+                    </p>
+                    <p>
+                        DICOM has no built-in cryptographic authentication. In practice, AE title filtering
+                        is the accepted access control mechanism for DICOM services on a clinical network.
+                        Without it, any device on the hospital LAN capable of sending DICOM traffic could push
+                        arbitrary data into the application.
+                    </p>
+
+                    <div class="code-compare">
+                        <div class="code-panel before">
+                            <div class="code-panel-label">Before</div>
+                            <pre>public Task OnReceiveAssociationRequestAsync(
+    DicomAssociation association)
+{
+    // CallingAE is logged but never checked.
+    Logger.LogInformation(
+        "[SCP] Incoming from {AE}",
+        association.CallingAE);
+
+    foreach (var pc in
+        association.PresentationContexts)
+    {
+        pc.AcceptTransferSyntaxes(...);
+    }
+
+    // All associations accepted.
+    return SendAssociationAcceptAsync(
+        association);
+}</pre>
+                        </div>
+                        <div class="code-panel after">
+                            <div class="code-panel-label">After</div>
+                            <pre>public Task OnReceiveAssociationRequestAsync(
+    DicomAssociation association)
+{
+    var callingAe =
+        association.CallingAE?.Trim() ?? "";
+
+    if (AllowedCallingAeTitles.Count > 0
+        &amp;&amp; !AllowedCallingAeTitles
+               .Contains(callingAe))
+    {
+        Logger.LogWarning(
+            "[SCP] Rejected unknown AE '{AE}'",
+            callingAe);
+        return SendAssociationRejectAsync(
+            DicomRejectResult.Permanent,
+            DicomRejectSource.ServiceUser,
+            DicomRejectReason
+                .CallingAENotRecognized);
+    }
+
+    Logger.LogInformation(
+        "[SCP] Accepted '{AE}'", callingAe);
+    foreach (var pc in
+        association.PresentationContexts)
+    {
+        pc.AcceptTransferSyntaxes(...);
+    }
+    return SendAssociationAcceptAsync(
+        association);
+}</pre>
+                        </div>
+                    </div>
+
+                    <h4>Remediation</h4>
+                    <p>
+                        A static <code>AllowedCallingAeTitles</code> hash set was added to the service class.
+                        It is populated at SCP startup and on every SCP restart from the list of configured
+                        remote nodes stored in the application's settings database. Associations from AE titles
+                        not in the set are rejected using the DICOM <code>CallingAENotRecognized</code> reason
+                        code, which is the standard protocol response for this condition.
+                    </p>
+                    <p>
+                        If no remote nodes have been configured (fresh installation), the allowlist is empty
+                        and all connections are accepted with a warning logged. This prevents the application
+                        from being inaccessible during initial setup. Once remote nodes are added and the SCP
+                        is restarted, the allowlist becomes active.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Finding 4 -->
+            <div class="finding">
+                <div class="finding-header">
+                    <div class="finding-header-left">
+                        <div class="finding-number high">4</div>
+                        <div>
+                            <div class="finding-title">Protected Health Information Written to Application Logs</div>
+                            <div class="finding-location">Services/RadiopaediaApiClient.cs &mdash; CreateCaseAsync</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-shrink:0;">
+                        <span class="badge badge-high">High</span>
+                        <span class="badge badge-fixed">Resolved</span>
+                    </div>
+                </div>
+                <div class="finding-body">
+                    <h4>Description</h4>
+                    <p>
+                        Before dispatching a case creation request to the Radiopaedia API, the application
+                        serialized the full request payload to JSON and wrote it to the logger at
+                        <code>Information</code> level using an <code>[API-DEBUG]</code> prefix. The payload
+                        included patient-derived fields sourced from the DICOM dataset: clinical presentation
+                        text, patient age, and patient sex.
+                    </p>
+                    <p>
+                        The application's <code>DatabaseLoggerProvider</code> captures all log entries at
+                        <code>Information</code> level or above for the <code>RadiopaediaConnect.Services</code>
+                        namespace and persists them verbatim to the <code>AppLogs</code> table in SQLite.
+                        These logs were then queryable via <code>GET /api/logs</code>. Any user with the admin
+                        password could retrieve the full clinical history of every case ever submitted through
+                        the application, without those users necessarily having authorised access to that
+                        patient data.
+                    </p>
+
+                    <div class="code-compare">
+                        <div class="code-panel before">
+                            <div class="code-panel-label">Before</div>
+                            <pre>var payload = new {
+    presentation = draft.Presentation, // PHI
+    age          = draft.Age,          // PHI
+    gender       = draft.Gender,       // PHI
+    system_id    = systemId,
+    ...
+};
+
+var json = JsonSerializer.Serialize(payload);
+
+// Full PHI payload written to persistent logs.
+_logger.LogInformation(
+    "[API-DEBUG] Sending Payload: {Json}",
+    json);</pre>
+                        </div>
+                        <div class="code-panel after">
+                            <div class="code-panel-label">After</div>
+                            <pre>var payload = new {
+    presentation = draft.Presentation,
+    age          = draft.Age,
+    gender       = draft.Gender,
+    system_id    = systemId,
+    ...
+};
+
+var json = JsonSerializer.Serialize(payload);
+
+// PHI fields replaced with static placeholders.
+_logger.LogInformation(
+    "[API] Case payload: system_id={Sid}," +
+    " certainty={Cert}," +
+    " age=***, gender=***, presentation=***",
+    payload.system_id,
+    payload.diagnostic_certainty_id);</pre>
+                        </div>
+                    </div>
+
+                    <h4>Remediation</h4>
+                    <p>
+                        The <code>[API-DEBUG]</code> log statement was replaced with a structured log entry
+                        that records only the non-PHI operational fields (<code>system_id</code> and
+                        <code>diagnostic_certainty_id</code>). The three patient-derived fields are replaced
+                        with the static string <code>***</code>. The full JSON payload is still serialised
+                        and transmitted to the Radiopaedia API unchanged; only the log output is restricted.
+                    </p>
+                    <p>
+                        Separately, the <code>GET /api/logs</code> endpoint and all other admin-protected
+                        endpoints were migrated to session cookie authentication (see Finding 5), adding a
+                        second layer of access control over the log data.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Finding 5 -->
+            <div class="finding">
+                <div class="finding-header">
+                    <div class="finding-header-left">
+                        <div class="finding-number high">5</div>
+                        <div>
+                            <div class="finding-title">Credentials Exposed via Settings API and Per-Request Password Transmission</div>
+                            <div class="finding-location">Controllers/SettingsController.cs &mdash; GET /api/settings/local; all protected endpoints</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-shrink:0;">
+                        <span class="badge badge-high">High</span>
+                        <span class="badge badge-fixed">Resolved</span>
+                    </div>
+                </div>
+                <div class="finding-body">
+                    <h4>Description</h4>
+                    <p>This finding covers two related issues that were remediated together.</p>
+
+                    <h4>5a. Secrets Returned Verbatim from Settings API</h4>
+                    <p>
+                        The <code>GET /api/settings/local</code> endpoint returned the Radiopaedia OAuth
+                        client secret and the SMTP account password as plaintext strings in the JSON response.
+                        An attacker who obtained a valid admin session could immediately retrieve both
+                        credentials. The Radiopaedia client secret in particular is a higher-privilege
+                        credential: it can be used to impersonate the application at the OAuth provider level
+                        and mint tokens for any linked user account.
+                    </p>
+                    <p>
+                        A secondary issue was also identified: the <code>POST /api/settings/password/recover</code>
+                        endpoint accepted the Radiopaedia client secret as a recovery token with no authentication
+                        required. This effectively made the client secret a second, unauthenticated admin
+                        password.
+                    </p>
+
+                    <div class="code-compare">
+                        <div class="code-panel before">
+                            <div class="code-panel-label">Before (GET /api/settings/local)</div>
+                            <pre>return Ok(new {
+    radiopaediaClientId     =
+        settings.RadiopaediaClientId ?? "",
+    radiopaediaClientSecret =
+        settings.RadiopaediaClientSecret ?? "",
+    smtpPassword =
+        settings.SmtpPassword ?? "",
+    // Secrets returned verbatim.
+    ...
+});</pre>
+                        </div>
+                        <div class="code-panel after">
+                            <div class="code-panel-label">After (GET /api/settings/local)</div>
+                            <pre>private const string SecretMask = "********";
+
+return Ok(new {
+    radiopaediaClientId =
+        settings.RadiopaediaClientId ?? "",
+    radiopaediaClientSecret =
+        string.IsNullOrEmpty(
+            settings.RadiopaediaClientSecret)
+        ? "" : SecretMask,
+    smtpPassword =
+        string.IsNullOrEmpty(
+            settings.SmtpPassword)
+        ? "" : SecretMask,
+    ...
+});</pre>
+                        </div>
+                    </div>
+
+                    <div class="code-compare">
+                        <div class="code-panel before" style="grid-column: span 2;">
+                            <div class="code-panel-label">Before (PUT /api/settings/local) - mask not checked, value always overwritten</div>
+                            <pre>var entity = new LocalSettingsEntity {
+    RadiopaediaClientSecret = request.RadiopaediaClientSecret,
+    SmtpPassword            = request.SmtpPassword,
+    ...
+};</pre>
+                        </div>
+                    </div>
+
+                    <div class="code-compare">
+                        <div class="code-panel after" style="grid-column: span 2;">
+                            <div class="code-panel-label">After (PUT /api/settings/local) - mask sentinel preserved, other values written through</div>
+                            <pre>var newSecret = request.RadiopaediaClientSecret == SecretMask
+    ? previousSettings.RadiopaediaClientSecret
+    : request.RadiopaediaClientSecret;
+
+var newSmtpPassword = request.SmtpPassword == SecretMask
+    ? previousSettings.SmtpPassword
+    : request.SmtpPassword;
+
+var entity = new LocalSettingsEntity {
+    RadiopaediaClientSecret = newSecret,
+    SmtpPassword            = newSmtpPassword,
+    ...
+};</pre>
+                        </div>
+                    </div>
+
+                    <h4>5b. Admin Password Transmitted on Every API Request</h4>
+                    <p>
+                        All protected API endpoints previously required the caller to supply the raw admin
+                        password in an <code>X-Admin-Password</code> HTTP header on every request. The
+                        frontend stored the password in <code>sessionStorage</code> for this purpose.
+                        This design means the password traversed the network repeatedly and was accessible
+                        to any JavaScript running in the browser session.
+                    </p>
+                    <p>
+                        In the Docker deployment, the application runs on HTTP rather than HTTPS before
+                        reaching a reverse proxy. Any network observer between the client and the container
+                        could capture the admin password from routine settings page activity.
+                    </p>
+
+                    <h4>Remediation</h4>
+                    <p>
+                        The authentication model was redesigned to use server-side sessions:
+                    </p>
+                    <ul class="findings-list">
+                        <li>
+                            A new <code>AdminSessionService</code> maintains an in-memory map of
+                            cryptographically random 32-byte session tokens to expiry timestamps (8-hour
+                            lifetime). Tokens are generated using <code>RandomNumberGenerator.GetBytes</code>.
+                        </li>
+                        <li>
+                            <code>POST /api/settings/password/verify</code> issues an <code>HttpOnly</code>,
+                            <code>SameSite=Strict</code> session cookie on a successful password check.
+                            The password itself is no longer stored or transmitted after this single call.
+                        </li>
+                        <li>
+                            All protected endpoints now validate the session cookie rather than a password
+                            header. The validation is centralised in a shared <code>AdminControllerBase</code>
+                            class inherited by all three admin controllers.
+                        </li>
+                        <li>
+                            <code>POST /api/settings/logout</code> invalidates the server-side token and
+                            clears the cookie. The password recovery flow also calls this endpoint to
+                            invalidate any active session before redirecting to the setup page.
+                        </li>
+                        <li>
+                            The <code>sessionStorage</code> password cache was removed from the frontend
+                            entirely. The settings click handler in the main navigation checks
+                            <code>GET /api/settings/session</code> to determine whether an active session
+                            exists, showing the password modal only when needed.
+                        </li>
+                    </ul>
+
+                    <div class="info-box">
+                        <p>
+                            The <code>Secure</code> flag on the session cookie is set based on
+                            <code>Request.IsHttps</code> at the time the cookie is issued. In production
+                            deployments where TLS is terminated at the reverse proxy, it is recommended to
+                            configure the application to trust the forwarded scheme header
+                            (<code>X-Forwarded-Proto</code>) so that the cookie receives the
+                            <code>Secure</code> attribute even when the backend connection is plain HTTP.
+                            The application already configures <code>UseForwardedHeaders</code> for this purpose.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Remediation Summary -->
+        <div class="section">
+            <h2 class="section-title">4. Remediation Summary</h2>
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Vulnerability</th>
+                        <th>Severity</th>
+                        <th>Files Changed</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>Unauthenticated debug C-MOVE endpoint</td>
+                        <td><span class="badge badge-critical">Critical</span></td>
+                        <td><code>Controllers/DebugController.cs</code> (deleted)</td>
+                        <td><span class="badge badge-fixed">Resolved</span></td>
+                    </tr>
+                    <tr>
+                        <td>2</td>
+                        <td>Path traversal via DICOM UIDs</td>
+                        <td><span class="badge badge-high">High</span></td>
+                        <td><code>Data/DicomRepository.cs</code>, <code>DicomScpManager.cs</code>, <code>CStoreScp.cs</code></td>
+                        <td><span class="badge badge-fixed">Resolved</span></td>
+                    </tr>
+                    <tr>
+                        <td>3</td>
+                        <td>Open DICOM SCP, no AE title filtering</td>
+                        <td><span class="badge badge-high">High</span></td>
+                        <td><code>DicomScpManager.cs</code>, <code>SettingsController.cs</code>, <code>Program.cs</code></td>
+                        <td><span class="badge badge-fixed">Resolved</span></td>
+                    </tr>
+                    <tr>
+                        <td>4</td>
+                        <td>PHI written to persistent application logs</td>
+                        <td><span class="badge badge-high">High</span></td>
+                        <td><code>Services/RadiopaediaApiClient.cs</code></td>
+                        <td><span class="badge badge-fixed">Resolved</span></td>
+                    </tr>
+                    <tr>
+                        <td>5a</td>
+                        <td>Credentials returned verbatim from settings API</td>
+                        <td><span class="badge badge-high">High</span></td>
+                        <td><code>Controllers/SettingsController.cs</code></td>
+                        <td><span class="badge badge-fixed">Resolved</span></td>
+                    </tr>
+                    <tr>
+                        <td>5b</td>
+                        <td>Admin password transmitted on every request</td>
+                        <td><span class="badge badge-high">High</span></td>
+                        <td><code>AdminSessionService.cs</code>, <code>AdminControllerBase.cs</code>, frontend auth flow</td>
+                        <td><span class="badge badge-fixed">Resolved</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Residual Risk -->
+        <div class="section">
+            <h2 class="section-title">5. Residual Risk and Recommendations</h2>
+            <p>
+                All identified vulnerabilities have been resolved. The following items are noted as
+                operational recommendations rather than code-level findings.
+            </p>
+
+            <h3 class="sub-title">TLS at the Reverse Proxy</h3>
+            <p>
+                The application container runs on HTTP internally. Ensuring that the reverse proxy enforces
+                HTTPS for all client-facing traffic is the single most impactful infrastructure control
+                remaining. Without TLS, the session cookie (while <code>HttpOnly</code> and
+                <code>SameSite=Strict</code>) is transmitted in the clear.
+            </p>
+
+            <h3 class="sub-title">DICOM Port Network Segmentation</h3>
+            <p>
+                Port 104 (DICOM C-STORE SCP) should be accessible only from known PACS hosts at the network
+                level. AE title filtering, as implemented in this review, is a protocol-layer control; it does
+                not prevent a malicious host from initiating a TCP connection. Firewall rules restricting
+                port 104 to the IP addresses of authorised PACS systems provide defence in depth.
+            </p>
+
+            <h3 class="sub-title">Admin Session Expiry</h3>
+            <p>
+                Admin sessions currently expire after eight hours. For a clinical environment, a shorter
+                idle timeout (for example, two hours) may be appropriate depending on the operator's
+                access policy. Session tokens are stored in-memory and are cleared on application restart.
+            </p>
+
+            <h3 class="sub-title">Dependency Auditing</h3>
+            <p>
+                Third-party package versions were not reviewed as part of this engagement. Running
+                <code>dotnet list package --vulnerable</code> and <code>npm audit</code> periodically
+                is recommended to catch known CVEs in dependencies such as fo-dicom, BCrypt.Net, and
+                the React ecosystem packages.
+            </p>
+        </div>
+
+        <!-- Conclusion -->
+        <div class="section">
+            <h2 class="section-title">6. Conclusion</h2>
+            <p>
+                At the time of the initial review, RadiopaediaConnect contained a Critical vulnerability
+                that allowed any unauthenticated network user to trigger patient data retrieval from the
+                hospital PACS, alongside four High-severity issues covering file system traversal,
+                uncontrolled DICOM access, PHI exposure in logs, and credential leakage through the
+                settings API. All five were resolved within the same development cycle.
+            </p>
+            <p>
+                Following remediation, no Critical or High severity findings remain open. The changes
+                address the primary attack surfaces introduced by the application's role as a
+                DICOM-to-web bridge in a clinical environment. Subject to the operational recommendations
+                in Section 5, the application is considered suitable for production deployment.
+            </p>
+        </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <span>RadiopaediaConnect Security Assessment &mdash; Confidential</span>
+        <span>17 May 2026</span>
+    </div>
+
+</div>
+</body>
+</html>
