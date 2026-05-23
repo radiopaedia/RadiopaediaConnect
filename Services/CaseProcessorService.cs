@@ -3,6 +3,7 @@ using FellowOakDicom.Imaging;
 using RadiopaediaConnect.Data;
 using RadiopaediaConnect.Models;
 using RadiopaediaConnect.Services.Dicom;
+using DicomAnonymizer = RadiopaediaConnect.Services.Dicom.DicomAnonymizer;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
@@ -15,6 +16,7 @@ namespace RadiopaediaConnect.Services
         private readonly DicomScu _dicomScu;
         private readonly DicomRepository _repository;
         private readonly RadiopaediaApiClient _apiClient;
+        private readonly DicomAnonymizer _anonymizer;
         private readonly INotificationService _notificationService;
         private readonly ILogger<CaseProcessorService> _logger;
 
@@ -22,12 +24,14 @@ namespace RadiopaediaConnect.Services
             DicomScu dicomScu,
             DicomRepository repository,
             RadiopaediaApiClient apiClient,
+            DicomAnonymizer anonymizer,
             INotificationService notificationService,
             ILogger<CaseProcessorService> logger)
         {
             _dicomScu = dicomScu;
             _repository = repository;
             _apiClient = apiClient;
+            _anonymizer = anonymizer;
             _notificationService = notificationService;
             _logger = logger;
 
@@ -35,9 +39,294 @@ namespace RadiopaediaConnect.Services
             if (!Directory.Exists(processingRoot)) Directory.CreateDirectory(processingRoot);
         }
 
-        public async Task<string> PrepareSeriesAsync(string studyUid, SubmitCaseSeriesDto seriesDto, string remoteNodeName)
+        // ──────────────────────────────────────────────────────────────────────────────────
+        // Public entry point
+        // ──────────────────────────────────────────────────────────────────────────────────
+
+        public async Task ProcessCaseAsync(Guid caseId)
         {
-            _logger.LogInformation($"[Processor] Preparing Series: {seriesDto.SeriesInstanceUid}");
+            _logger.LogInformation("[PIPELINE] Processing Case {CaseId}", caseId);
+            await _repository.UpdateCaseStatusAsync(caseId, "Processing");
+
+            string? rCaseId = null;
+
+            try
+            {
+                var fullCase = await _repository.GetFullDraftCaseAsync(caseId);
+                if (fullCase == null) throw new Exception($"DraftCase {caseId} not found in database.");
+
+                var draftEntity = await _repository.GetDraftCaseAsync(caseId);
+                string username = draftEntity?.Username ?? "unknown_user";
+
+                rCaseId = await _apiClient.CreateCaseAsync(draftEntity, username);
+                _logger.LogInformation("[PIPELINE] Case Created! Radiopaedia ID: {RCaseId}", rCaseId);
+                await _repository.UpdateCaseStatusAsync(caseId, "Processing", rCaseId);
+
+                foreach (var study in fullCase.Studies)
+                {
+                    string rawModality = study.Series[0].Modality;
+                    string radiopaediaModality = MapToRadiopaediaModality(rawModality);
+                    _logger.LogInformation("[PIPELINE] Processing Study: {StudyUid} → {Modality}",
+                        study.StudyInstanceUid, radiopaediaModality);
+
+                    var studyPayload = new SubmitCaseStudyDto
+                    {
+                        Modality = radiopaediaModality,
+                        Findings = study.Findings
+                    };
+
+                    string rStudyId = await _apiClient.CreateStudyAsync(rCaseId, studyPayload, username);
+                    _logger.LogInformation("[PIPELINE] Study Created! Radiopaedia ID: {RStudyId}", rStudyId);
+
+                    foreach (var series in study.Series)
+                    {
+                        _logger.LogInformation("[PIPELINE] Processing Series {SeriesUid} (method: {Method})",
+                            series.SeriesInstanceUid, series.UploadMethod);
+
+                        // Ensure DICOM files are present (C-MOVE if needed)
+                        string dicomPath = await EnsureSeriesRetrievedAsync(
+                            study.StudyInstanceUid, series.SeriesInstanceUid, study.RemoteNodeName);
+
+                        if (series.RequestsDicom)
+                        {
+                            await ProcessDicomSeriesAsync(
+                                rCaseId, rStudyId, dicomPath, series, username);
+                        }
+                        else
+                        {
+                            await ProcessPngSeriesAsync(
+                                rCaseId, rStudyId, dicomPath, series, username);
+                        }
+                    }
+                }
+
+                await _apiClient.MarkUploadFinishedAsync(rCaseId, username);
+                await _repository.UpdateCaseStatusAsync(caseId, "Completed", rCaseId);
+                _logger.LogInformation("[PIPELINE] SUCCESS! Case {RCaseId} completed.", rCaseId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[PIPELINE] FAILED! Case {CaseId}: {Message}", caseId, ex.Message);
+                await _repository.UpdateCaseStatusAsync(caseId, "Failed", rCaseId, ex.Message);
+                await _notificationService.SendAsync(
+                    $"Pipeline failed: Case {caseId}",
+                    $"Case ID: {caseId}\nRadiopaedia Case ID: {rCaseId ?? "not created"}\nError: {ex.Message}\n\n{ex.StackTrace}");
+                throw;
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────────────────
+        // Shared: retrieve DICOM files from PACS if not already present
+        // ──────────────────────────────────────────────────────────────────────────────────
+
+        private async Task<string> EnsureSeriesRetrievedAsync(
+            string studyUid, string seriesUid, string remoteNodeName)
+        {
+            string dicomPath = _repository.GetSeriesStoragePath(studyUid, seriesUid);
+            var existing = await _repository.GetSeriesAsync(seriesUid);
+
+            if (existing == null || !existing.IsRetrieved)
+            {
+                await _dicomScu.TriggerCMoveAsync(studyUid, seriesUid, remoteNodeName);
+                int attempts = 0;
+                while (!Directory.Exists(dicomPath) || !Directory.EnumerateFiles(dicomPath, "*.dcm").Any())
+                {
+                    if (attempts >= 60)
+                        throw new Exception($"Timeout waiting for DICOM files at {dicomPath}");
+                    if (attempts > 0 && attempts % 10 == 0)
+                        _logger.LogInformation("[PIPELINE] Waiting for DICOM files at {Path}, attempt {A}/60",
+                            dicomPath, attempts);
+                    await Task.Delay(1000);
+                    attempts++;
+                }
+            }
+
+            return dicomPath;
+        }
+
+        // ──────────────────────────────────────────────────────────────────────────────────
+        // Path A: Native DICOM upload via S3
+        // ──────────────────────────────────────────────────────────────────────────────────
+
+        private async Task ProcessDicomSeriesAsync(
+            string rCaseId, string rStudyId,
+            string dicomPath, SubmitCaseSeriesDto series, string username)
+        {
+            // Detect whether any files in this series are multiframe
+            var dcmFiles = Directory.GetFiles(dicomPath, "*.dcm");
+            var fileInfos = await DicomFrameExpander.ScanFilesAsync(dcmFiles);
+            bool hasMultiframe = fileInfos.Any(f => f.NumberOfFrames > 1);
+
+            // Culling = user selected a subset that isn't "everything"
+            int totalFrames = DicomFrameExpander.ExpandFrames(fileInfos).Count;
+            bool isCulled = series.Start > 1 || series.End < totalFrames || series.Step > 1;
+
+            if (hasMultiframe && isCulled)
+            {
+                // Cannot safely extract a partial frame range from a multiframe DICOM file.
+                // Fall back to the PNG path automatically.
+                _logger.LogWarning(
+                    "[PIPELINE] Series {SeriesUid} has multiframe files with culling — " +
+                    "falling back from DICOM to PNG upload.", series.SeriesInstanceUid);
+                await ProcessPngSeriesAsync(rCaseId, rStudyId, dicomPath, series, username);
+                return;
+            }
+
+            // Determine which files to upload based on the frame selection.
+            // For single-frame series, each .dcm file == one frame, so we can simply
+            // skip files outside the Start/End/Step window.
+            List<string> filesToUpload;
+            if (isCulled)
+            {
+                var expandedFrames = DicomFrameExpander.ExpandFrames(fileInfos);
+                int skipCount = Math.Max(0, series.Start - 1);
+                int takeCount = Math.Max(0, series.End - series.Start + 1);
+
+                var selectedFiles = expandedFrames
+                    .Skip(skipCount)
+                    .Take(takeCount)
+                    .Where((f, i) => series.Step <= 1 || i % series.Step == 0)
+                    .Select(f => f.FilePath)
+                    .Distinct()
+                    .ToList();
+
+                filesToUpload = selectedFiles;
+            }
+            else
+            {
+                filesToUpload = dcmFiles.ToList();
+            }
+
+            if (filesToUpload.Count == 0)
+            {
+                _logger.LogWarning("[PIPELINE] Series {SeriesUid}: no files selected after culling — skipping.",
+                    series.SeriesInstanceUid);
+                return;
+            }
+
+            // ── Anonymise: SHA-512 UIDs + allowlist copy, then upload ────────────────────
+            // UIDs are replaced using Radiopaedia's own deterministic hashing algorithm
+            // (SHA-512 → first two 32-bit signed words → "1.2.826.0.1.3680043.10.341.512.W0.W1")
+            // so their server-side validator accepts the files.
+            string anonDir = Path.Combine(_repository.GetProcessingRoot(), series.SeriesInstanceUid, "anon");
+            if (Directory.Exists(anonDir)) Directory.Delete(anonDir, true);
+
+            // Stage the selected files into a temp folder so AnonymizeSeriesAsync can glob *.dcm
+            var uidMap = new DicomUidMap();
+            var tempInputDir = Path.Combine(_repository.GetProcessingRoot(), series.SeriesInstanceUid, "selected");
+            if (Directory.Exists(tempInputDir)) Directory.Delete(tempInputDir, true);
+            Directory.CreateDirectory(tempInputDir);
+            foreach (var src in filesToUpload)
+                File.Copy(src, Path.Combine(tempInputDir, Path.GetFileName(src)), overwrite: true);
+
+            var anonPaths = await _anonymizer.AnonymizeSeriesAsync(tempInputDir, anonDir, uidMap);
+            if (Directory.Exists(tempInputDir)) Directory.Delete(tempInputDir, true);
+
+            try
+            {
+                if (anonPaths.Count == 0)
+                    throw new Exception($"Anonymisation produced 0 files for Series {series.SeriesInstanceUid} — check logs above.");
+
+                _logger.LogInformation("[PIPELINE] Uploading {Count} anonymised DICOM file(s) for Series {SeriesUid}",
+                    anonPaths.Count, series.SeriesInstanceUid);
+                await _apiClient.UploadDicomSeriesAsync(rCaseId, rStudyId, anonPaths, username);
+                _logger.LogInformation("[PIPELINE] DICOM upload complete for Series {SeriesUid}", series.SeriesInstanceUid);
+            }
+            finally
+            {
+                if (Directory.Exists(anonDir)) Directory.Delete(anonDir, true);
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────────────────
+        // Path B: PNG render → ZIP → legacy endpoint
+        // ──────────────────────────────────────────────────────────────────────────────────
+
+        private async Task ProcessPngSeriesAsync(
+            string rCaseId, string rStudyId,
+            string dicomPath, SubmitCaseSeriesDto series, string username)
+        {
+            string outputPath = Path.Combine(_repository.GetProcessingRoot(), series.SeriesInstanceUid);
+            if (Directory.Exists(outputPath)) Directory.Delete(outputPath, true);
+            Directory.CreateDirectory(outputPath);
+
+            // Build expanded frame list
+            var dicomFiles = Directory.GetFiles(dicomPath, "*.dcm");
+            var fileInfos = await DicomFrameExpander.ScanFilesAsync(dicomFiles);
+            var expandedFrames = DicomFrameExpander.ExpandFrames(fileInfos);
+
+            _logger.LogInformation("[PIPELINE] Series {SeriesUid}: {Files} files, {Frames} total frames",
+                series.SeriesInstanceUid, dicomFiles.Length, expandedFrames.Count);
+
+            // Apply Start/End/Step
+            int skipCount = Math.Max(0, series.Start - 1);
+            int takeCount = Math.Max(0, series.End - series.Start + 1);
+
+            var targetFrames = expandedFrames
+                .Skip(skipCount)
+                .Take(takeCount)
+                .ToList();
+
+            if (series.Step > 1)
+                targetFrames = targetFrames.Where((x, i) => i % series.Step == 0).ToList();
+
+            if (targetFrames.Count == 0)
+            {
+                _logger.LogWarning("[PIPELINE] Series {SeriesUid}: 0 frames after filtering — skipping.",
+                    series.SeriesInstanceUid);
+                return;
+            }
+
+            _logger.LogInformation("[PIPELINE] After selection (Start={S}, End={E}, Step={St}): {Count} frames",
+                series.Start, series.End, series.Step, targetFrames.Count);
+
+            // Render each frame to PNG
+            for (int i = 0; i < targetFrames.Count; i++)
+            {
+                var frame = targetFrames[i];
+                string pngName = $"frame_{i:D4}.png";
+                await ProcessDicomFrameWithImageSharpAsync(
+                    frame.FilePath, frame.FrameIndex,
+                    Path.Combine(outputPath, pngName),
+                    series.Redactions);
+            }
+
+            _logger.LogInformation("[PIPELINE] Series {SeriesUid}: rendered {Count} PNG frame(s)",
+                series.SeriesInstanceUid, targetFrames.Count);
+
+            if (Directory.GetFiles(outputPath, "*.png").Length == 0)
+            {
+                _logger.LogWarning("[PIPELINE] No PNGs generated for {SeriesUid} — skipping.", series.SeriesInstanceUid);
+                if (Directory.Exists(outputPath)) Directory.Delete(outputPath, true);
+                return;
+            }
+
+            string zipPath = Path.Combine(_repository.GetProcessingRoot(), $"{series.SeriesInstanceUid}.zip");
+            if (File.Exists(zipPath)) File.Delete(zipPath);
+
+            _logger.LogInformation("[PIPELINE] Creating ZIP for Series {SeriesUid}", series.SeriesInstanceUid);
+            ZipFile.CreateFromDirectory(outputPath, zipPath, CompressionLevel.Fastest, false);
+
+            _logger.LogInformation("[PIPELINE] Uploading ZIP for Series {SeriesUid} → Study {RStudyId}",
+                series.SeriesInstanceUid, rStudyId);
+            await _apiClient.UploadStudyZipAsync(rCaseId, rStudyId, zipPath, username);
+
+            if (File.Exists(zipPath)) File.Delete(zipPath);
+            if (Directory.Exists(outputPath)) Directory.Delete(outputPath, true);
+        }
+
+        // ──────────────────────────────────────────────────────────────────────────────────
+        // PNG rendering (unchanged)
+        // ──────────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Kept for the legacy PNG path and for the preview pipeline.
+        /// Renders a single DICOM frame to a PNG file, applying optional redaction zones.
+        /// </summary>
+        public async Task<string> PrepareSeriesAsync(
+            string studyUid, SubmitCaseSeriesDto seriesDto, string remoteNodeName)
+        {
+            _logger.LogInformation("[Processor] Preparing Series: {SeriesUid}", seriesDto.SeriesInstanceUid);
 
             string dicomPath = _repository.GetSeriesStoragePath(studyUid, seriesDto.SeriesInstanceUid);
             string outputPath = Path.Combine(_repository.GetProcessingRoot(), seriesDto.SeriesInstanceUid);
@@ -52,59 +341,46 @@ namespace RadiopaediaConnect.Services
                 int attempts = 0;
                 while (!Directory.Exists(dicomPath) || !Directory.EnumerateFiles(dicomPath, "*.dcm").Any())
                 {
-                    if (attempts >= 60) throw new Exception($"Timeout waiting for DICOM files at {dicomPath}");
+                    if (attempts >= 60)
+                        throw new Exception($"Timeout waiting for DICOM files at {dicomPath}");
                     if (attempts > 0 && attempts % 10 == 0)
-                        _logger.LogInformation("[PIPELINE] Waiting for DICOM files at {Path}, attempt {Attempt}/60", dicomPath, attempts);
+                        _logger.LogInformation("[PIPELINE] Waiting for DICOM files at {Path}, attempt {A}/60",
+                            dicomPath, attempts);
                     await Task.Delay(1000);
                     attempts++;
                 }
             }
 
-            // Build expanded frame list using the shared helper (same algorithm as metadata endpoint)
             var dicomFiles = Directory.GetFiles(dicomPath, "*.dcm");
             var fileInfos = await DicomFrameExpander.ScanFilesAsync(dicomFiles);
             var expandedFrames = DicomFrameExpander.ExpandFrames(fileInfos);
 
-            _logger.LogInformation($"[Processor] Series {seriesDto.SeriesInstanceUid}: {dicomFiles.Length} files, {expandedFrames.Count} total frames");
+            _logger.LogInformation("[Processor] Series {SeriesUid}: {Files} files, {Frames} total frames",
+                seriesDto.SeriesInstanceUid, dicomFiles.Length, expandedFrames.Count);
 
-            // Apply Start/End/Step on the expanded frame list (1-based indices)
             int skipCount = Math.Max(0, seriesDto.Start - 1);
             int takeCount = Math.Max(0, seriesDto.End - seriesDto.Start + 1);
 
-            var targetFrames = expandedFrames
-                .Skip(skipCount)
-                .Take(takeCount)
-                .ToList();
-
+            var targetFrames = expandedFrames.Skip(skipCount).Take(takeCount).ToList();
             if (seriesDto.Step > 1)
                 targetFrames = targetFrames.Where((x, i) => i % seriesDto.Step == 0).ToList();
 
-            if (seriesDto.Step > 1 && targetFrames.Count == 0)
-                _logger.LogWarning("[PIPELINE] Series {SeriesUid} produced 0 frames after filtering (Start={Start}, End={End}, Step={Step})",
-                    seriesDto.SeriesInstanceUid, seriesDto.Start, seriesDto.End, seriesDto.Step);
-            else
-                _logger.LogInformation("[Processor] After selection (Start={Start}, End={End}, Step={Step}): {Count} frames to process",
-                    seriesDto.Start, seriesDto.End, seriesDto.Step, targetFrames.Count);
-
-            // Render each frame to PNG
             for (int i = 0; i < targetFrames.Count; i++)
             {
                 var frame = targetFrames[i];
                 string pngName = $"frame_{i:D4}.png";
-                string fullOutputPath = Path.Combine(outputPath, pngName);
-                await ProcessDicomFrameWithImageSharpAsync(frame.FilePath, frame.FrameIndex, fullOutputPath, seriesDto.Redactions);
+                await ProcessDicomFrameWithImageSharpAsync(
+                    frame.FilePath, frame.FrameIndex,
+                    Path.Combine(outputPath, pngName),
+                    seriesDto.Redactions);
             }
 
-            _logger.LogInformation("[PIPELINE] Series {SeriesUid}: rendered {Count} PNG frames", seriesDto.SeriesInstanceUid, targetFrames.Count);
+            _logger.LogInformation("[PIPELINE] Series {SeriesUid}: rendered {Count} PNG frame(s)",
+                seriesDto.SeriesInstanceUid, targetFrames.Count);
 
             return outputPath;
         }
 
-        /// <summary>
-        /// Renders a specific frame from a DICOM file to PNG, applying redaction zones.
-        /// Uses fo-dicom's DicomImage.RenderImage(frameIndex) which handles all transfer syntaxes
-        /// including JPEG Lossless (via the registered ImageSharp manager + codecs).
-        /// </summary>
         private async Task ProcessDicomFrameWithImageSharpAsync(
             string dicomFile, int frameIndex, string outputPath, List<RedactionZoneDto> redactions)
         {
@@ -141,93 +417,9 @@ namespace RadiopaediaConnect.Services
             }
         }
 
-        public async Task ProcessCaseAsync(Guid caseId)
-        {
-            _logger.LogInformation($"[PIPELINE] Processing Case {caseId}");
-
-            // Update status to Processing
-            await _repository.UpdateCaseStatusAsync(caseId, "Processing");
-
-            string? rCaseId = null;
-
-            try
-            {
-                var fullCase = await _repository.GetFullDraftCaseAsync(caseId);
-                if (fullCase == null) throw new Exception($"DraftCase {caseId} not found in database.");
-
-                var draftEntity = await _repository.GetDraftCaseAsync(caseId);
-                string username = draftEntity?.Username ?? "unknown_user";
-
-                rCaseId = await _apiClient.CreateCaseAsync(draftEntity, username);
-                _logger.LogInformation($"[PIPELINE] Case Created! Radiopaedia ID: {rCaseId}");
-
-                // Save Radiopaedia case ID immediately after creation
-                await _repository.UpdateCaseStatusAsync(caseId, "Processing", rCaseId);
-
-                foreach (var study in fullCase.Studies)
-                {
-                    string rawModality = study.Series[0].Modality;
-                    string radiopaediaModality = MapToRadiopaediaModality(rawModality);
-                    _logger.LogInformation($"[PIPELINE] Processing Study: {study.StudyInstanceUid} -> {radiopaediaModality}");
-
-                    var studyPayload = new SubmitCaseStudyDto
-                    {
-                        Modality = radiopaediaModality,
-                        Findings = study.Findings
-                    };
-
-                    string rStudyId = await _apiClient.CreateStudyAsync(rCaseId, studyPayload, username);
-                    _logger.LogInformation($"[PIPELINE] Study Created! Radiopaedia ID: {rStudyId}");
-
-                    foreach (var series in study.Series)
-                    {
-                        _logger.LogInformation($"[PIPELINE] Processing Series: {series.SeriesInstanceUid}");
-
-                        string processedFolder = await PrepareSeriesAsync(study.StudyInstanceUid, series, study.RemoteNodeName);
-
-                        if (Directory.GetFiles(processedFolder, "*.png").Length > 0)
-                        {
-                            string zipPath = Path.Combine(_repository.GetProcessingRoot(), $"{series.SeriesInstanceUid}.zip");
-                            if (File.Exists(zipPath)) File.Delete(zipPath);
-
-                            _logger.LogInformation("[PIPELINE] Creating ZIP for series {SeriesUid}", series.SeriesInstanceUid);
-                            ZipFile.CreateFromDirectory(processedFolder, zipPath, CompressionLevel.Fastest, false);
-
-                            _logger.LogInformation("[PIPELINE] Uploading series {SeriesUid} to study {RStudyId}", series.SeriesInstanceUid, rStudyId);
-                            await _apiClient.UploadStudyZipAsync(rCaseId, rStudyId, zipPath, username);
-
-                            if (File.Exists(zipPath)) File.Delete(zipPath);
-                        }
-                        else
-                        {
-                            _logger.LogWarning("[PIPELINE] No PNGs generated for {SeriesUid} — series will be skipped", series.SeriesInstanceUid);
-                        }
-
-                        if (Directory.Exists(processedFolder)) Directory.Delete(processedFolder, true);
-                    }
-                }
-
-                await _apiClient.MarkUploadFinishedAsync(rCaseId, username);
-
-                // Update status to Completed with Radiopaedia case ID
-                await _repository.UpdateCaseStatusAsync(caseId, "Completed", rCaseId);
-
-                _logger.LogInformation($"[PIPELINE] SUCCESS! Case {rCaseId} completed.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[PIPELINE] FAILED! Case {CaseId} error: {Message}", caseId, ex.Message);
-
-                // Update status to Failed with error message, preserve any existing Radiopaedia ID
-                await _repository.UpdateCaseStatusAsync(caseId, "Failed", rCaseId, ex.Message);
-
-                await _notificationService.SendAsync(
-                    $"Pipeline failed: Case {caseId}",
-                    $"Case ID: {caseId}\nRadiopaedia Case ID: {rCaseId ?? "not created"}\nError: {ex.Message}\n\n{ex.StackTrace}");
-
-                throw;
-            }
-        }
+        // ──────────────────────────────────────────────────────────────────────────────────
+        // Helpers
+        // ──────────────────────────────────────────────────────────────────────────────────
 
         private string MapToRadiopaediaModality(string dicomModality)
         {
@@ -238,24 +430,24 @@ namespace RadiopaediaConnect.Services
 
             return primary switch
             {
-                "CT" => "CT",
-                "MR" => "MRI",
-                "US" => "Ultrasound",
+                "CT"   => "CT",
+                "MR"   => "MRI",
+                "US"   => "Ultrasound",
                 "IVUS" => "Ultrasound",
-                "NM" => "Nuclear medicine",
-                "PT" => "Nuclear medicine",
-                "ST" => "Nuclear medicine",
-                "CR" => "X-ray",
-                "DX" => "X-ray",
-                "RG" => "X-ray",
-                "IO" => "X-ray",
-                "PX" => "X-ray",
-                "MG" => "Mammography",
-                "RF" => "Fluoroscopy",
-                "XA" => "DSA (angiography)",
-                "SC" => "X-ray",
-                "OT" => "X-ray",
-                _ => "X-ray"
+                "NM"   => "Nuclear medicine",
+                "PT"   => "Nuclear medicine",
+                "ST"   => "Nuclear medicine",
+                "CR"   => "X-ray",
+                "DX"   => "X-ray",
+                "RG"   => "X-ray",
+                "IO"   => "X-ray",
+                "PX"   => "X-ray",
+                "MG"   => "Mammography",
+                "RF"   => "Fluoroscopy",
+                "XA"   => "DSA (angiography)",
+                "SC"   => "X-ray",
+                "OT"   => "X-ray",
+                _      => "X-ray"
             };
         }
     }

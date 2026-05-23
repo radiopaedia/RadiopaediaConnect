@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import LogsTab from './components/LogsTab';
+import { AnonymisationContent } from './components/AnonymisationDrawer';
 
 const TABS = [
     { id: 'scp', label: 'DICOM SCP' },
@@ -8,13 +9,21 @@ const TABS = [
     { id: 'radiopaedia', label: 'Radiopaedia' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'logs', label: 'Logs' },
+    { id: 'anonymisation', label: 'Anonymisation' },
     { id: 'password', label: 'Change Password' },
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+
 const SettingsPage = () => {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const [authorized, setAuthorized] = useState(false);
-    const [activeTab, setActiveTab] = useState('scp');
+
+    const initialTab = TABS.some(t => t.id === searchParams.get('tab'))
+        ? searchParams.get('tab')
+        : 'scp';
+    const [activeTab, setActiveTab] = useState(initialTab);
     const [saving, setSaving] = useState(false);
     const [saveMessage, setSaveMessage] = useState(null);
 
@@ -820,6 +829,9 @@ const SettingsPage = () => {
                     {activeTab === 'logs' && (
                         <LogsTab />
                     )}
+
+                    {/* ── Anonymisation Tab ─────────────────────── */}
+                    {activeTab === 'anonymisation' && <AnonymisationContent />}
 
                     {/* ── Change Password Tab ────────────────────── */}
                     {activeTab === 'password' && (

@@ -7,6 +7,7 @@ import StudyList from './components/StudyList';
 import CaseDetailDrawer from './CaseDetailDrawer';
 import DuplicatePatientWarningModal from './DuplicatePatientWarningModal';
 import SubmissionSuccessModal from './SubmissionSuccessModal';
+import AnonymisationDrawer from './components/AnonymisationDrawer';
 
 const SYSTEM_MAP = {
     "Breast": 1, "Vascular": 2, "Central Nervous System": 3, "Chest": 4,
@@ -61,6 +62,13 @@ const DashboardPage = ({ user, onLogout }) => {
 
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [submittedCaseId, setSubmittedCaseId] = useState(null);
+
+    // Global upload format for this case — 'dicom' (native, anonymised) or 'png' (pixel-only).
+    // Individual series may still be forced to 'png' by constraints (redactions, multiframe culling).
+    const [uploadMethod, setUploadMethod] = useState('dicom');
+
+    // Anonymisation details drawer (shared across the case)
+    const [anonDrawerOpen, setAnonDrawerOpen] = useState(false);
 
     const dragItem = useRef();
     const dragOverItem = useRef();
@@ -133,6 +141,9 @@ const DashboardPage = ({ user, onLogout }) => {
         setShowDuplicateWarning(false);
         setExistingPatientCases([]);
         setPendingDraftStudy(null);
+
+        setUploadMethod('dicom');
+        setAnonDrawerOpen(false);
 
         setViewMode('search');
     };
@@ -371,7 +382,11 @@ const DashboardPage = ({ user, onLogout }) => {
                         start: sData.start,
                         end: sData.end,
                         step: sData.step,
-                        redactions: sData.redactions || []
+                        redactions: sData.redactions || [],
+                        // sData.uploadMethod === 'png' means this series was force-flagged
+                        // (redactions applied, or multiframe culling). Otherwise fall back
+                        // to the global case-level preference.
+                        uploadMethod: sData.uploadMethod === 'png' ? 'png' : uploadMethod
                     };
                 });
                 return {
@@ -655,9 +670,7 @@ const DashboardPage = ({ user, onLogout }) => {
                                             </tbody>
                                         </table>
                                     </div>
-                                    <div className="flex-none p-3 bg-yellow-50 dark:bg-yellow-900/10 border-t border-yellow-100 dark:border-yellow-800 text-[11px] text-yellow-800 dark:text-yellow-200">
-                                        <strong>Note:</strong> Patient metadata is anonymised on upload. Information burnt into images (pixel data) must be redacted manually.
-                                    </div>
+
                                 </div>
                             </div>
                             {/* RIGHT COLUMN: Case Details Form */}
@@ -692,6 +705,95 @@ const DashboardPage = ({ user, onLogout }) => {
                                     onSeriesUpdate={handleSeriesUpdate}
                                     loading={isLoadingSeries}
                                 />
+
+                                {/* ── Upload Format Card ─────────────────────────────────────────────── */}
+                                <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+
+                                    {/* Header row */}
+                                    <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                                        <div>
+                                            <p className="text-sm font-bold text-slate-700 dark:text-slate-300">Upload Format</p>
+                                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Applies to all series in this case</p>
+                                        </div>
+                                        {/* Toggle */}
+                                        <div className="flex items-center bg-white dark:bg-slate-700 rounded-md border border-slate-300 dark:border-slate-600 p-0.5 shadow-sm">
+                                            <button
+                                                onClick={() => setUploadMethod('dicom')}
+                                                className={`px-5 py-1.5 text-xs font-bold uppercase rounded transition-colors
+                                                    ${uploadMethod === 'dicom'
+                                                        ? 'bg-indigo-600 text-white shadow-inner'
+                                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}
+                                            >
+                                                DICOM
+                                            </button>
+                                            <button
+                                                onClick={() => setUploadMethod('png')}
+                                                className={`px-5 py-1.5 text-xs font-bold uppercase rounded transition-colors
+                                                    ${uploadMethod === 'png'
+                                                        ? 'bg-slate-600 text-white shadow-inner'
+                                                        : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600'}`}
+                                            >
+                                                PNG
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Description */}
+                                    <div className="px-4 py-3 text-sm space-y-2">
+                                        {uploadMethod === 'dicom' ? (
+                                            <>
+                                                <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
+                                                    <strong className="text-indigo-700 dark:text-indigo-400">Native DICOM upload:</strong> files
+                                                    are anonymised on this system before being sent to Radiopaedia. All patient
+                                                    tags are zeroed, non-medical tags are stripped, and UIDs are replaced using
+                                                    Radiopaedia&apos;s SHA-512 hashing algorithm.
+                                                </p>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400">
+                                                    Some series are always uploaded as PNG regardless of this setting:
+                                                </p>
+                                                <ul className="text-xs text-slate-500 dark:text-slate-400 list-disc list-inside space-y-0.5 ml-1">
+                                                    <li>Series with image redactions (pixel manipulation requires PNG conversion)</li>
+                                                    <li>Multiframe series (single file / many frames) where only a subset of frames is selected; partial frame extraction from multiframe DICOM is not supported</li>
+                                                </ul>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 italic">
+                                                    Note: DICOM uploads take a little longer for Radiopaedia to process before images become viewable. Please allow a few minutes after a successful upload.
+                                                </p>
+                                                <button
+                                                    onClick={() => setAnonDrawerOpen(true)}
+                                                    className="inline-flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 font-semibold pt-0.5"
+                                                >
+                                                    View full anonymisation details
+                                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                                                    </svg>
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
+                                                <strong className="text-sky-700 dark:text-sky-400">PNG conversion:</strong> DICOM files
+                                                are decoded and rendered to PNG images before upload. Only pixel data is sent;
+                                                all DICOM header metadata (patient name, dates, scanner details, etc.) is
+                                                automatically stripped during conversion.
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    {/* Always visible — burnt-in warning */}
+                                    <div className="px-4 py-3 bg-amber-50 dark:bg-amber-950/20 border-t border-amber-100 dark:border-amber-800/40 flex items-start gap-3">
+                                        <svg className="w-4 h-4 text-amber-500 dark:text-amber-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                        </svg>
+                                        <p className="text-amber-800 dark:text-amber-300 text-sm leading-relaxed">
+                                            <strong>Burnt-in pixel data:</strong> Text overlaid directly onto image pixels
+                                            (e.g. patient name stamped on the scan) cannot be removed by any metadata-level
+                                            process; this applies to both DICOM and PNG modes. Use the{' '}
+                                            <strong>Redact</strong> tool in the series viewer to draw over any identifying
+                                            regions before submitting.
+                                        </p>
+                                    </div>
+                                </div>
+
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Study Findings</label>
                                     <textarea
@@ -761,6 +863,12 @@ const DashboardPage = ({ user, onLogout }) => {
                 onClose={handleDrawerClose}
                 caseId={selectedCaseId}
                 zIndex={60}
+            />
+
+            {/* DICOM Anonymisation Details Drawer */}
+            <AnonymisationDrawer
+                isOpen={anonDrawerOpen}
+                onClose={() => setAnonDrawerOpen(false)}
             />
         </MainLayout>
     );

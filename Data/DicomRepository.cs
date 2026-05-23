@@ -100,7 +100,8 @@ namespace RadiopaediaConnect.Data
                         Start = (int)ser.StartFrame,
                         End = (int)ser.EndFrame,
                         Step = (int)ser.StepFrame,
-                        Redactions = redactions ?? new List<RedactionZoneDto>()
+                        Redactions = redactions ?? new List<RedactionZoneDto>(),
+                        UploadMethod = (string?)ser.UploadMethod ?? "dicom"
                     });
                 }
                 result.Studies.Add(studyDto);
@@ -172,10 +173,10 @@ namespace RadiopaediaConnect.Data
                         var sqlSeries = @"
                             INSERT INTO DraftCaseSeries (
                                 DraftCaseStudyId, SeriesInstanceUid, SeriesDescription, Modality,
-                                StartFrame, EndFrame, StepFrame, RedactionsJson
+                                StartFrame, EndFrame, StepFrame, RedactionsJson, UploadMethod
                             ) VALUES (
                                 @StudyId, @SeriesUid, @Desc, @Mod,
-                                @Start, @End, @Step, @Redactions
+                                @Start, @End, @Step, @Redactions, @UploadMethod
                             )";
 
                         await conn.ExecuteAsync(sqlSeries, new
@@ -187,7 +188,8 @@ namespace RadiopaediaConnect.Data
                             Start = series.Start,
                             End = series.End,
                             Step = series.Step,
-                            Redactions = JsonSerializer.Serialize(series.Redactions)
+                            Redactions = JsonSerializer.Serialize(series.Redactions),
+                            UploadMethod = series.UploadMethod
                         }, trans);
                     }
                 }

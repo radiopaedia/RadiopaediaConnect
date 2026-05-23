@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import DicomViewer from './DicomViewer';
+// AnonymisationDrawer lives in DashboardPage now (global per-case setting)
 import { clearFileCache } from '../../../lib/csdicomLoader';
 
 // Modalities where multiframe instances are common — require preview before checkbox selection
@@ -217,13 +218,19 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         const count = Math.floor((sliceConfig.end - sliceConfig.start) / sliceConfig.step) + 1;
         const savedState = selectedSeriesMap[activeSeries.seriesInstanceUid];
         const existingRedactions = savedState?.redactions || [];
+        // Preserve an existing forced-PNG flag (e.g. from earlier redaction),
+        // or add one if this subset configuration makes DICOM unavailable.
+        const wasForcedPng = savedState?.uploadMethod === 'png';
 
         onSeriesUpdate(
             activeSeries.seriesInstanceUid,
             {
                 ...sliceConfig,
                 total: count,
-                redactions: existingRedactions
+                redactions: existingRedactions,
+                // Only stamp uploadMethod:'png' when forced; omit otherwise so the
+                // global case-level setting in DashboardPage takes effect.
+                ...((wasForcedPng || !dicomAvailable) ? { uploadMethod: 'png' } : {})
             },
             'select'
         );
@@ -247,7 +254,8 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                     activeSeries.seriesInstanceUid,
                     {
                         ...configToUse,
-                        redactions: newRedactions
+                        redactions: newRedactions,
+                        uploadMethod: 'png' // redactions always force PNG
                     },
                     'select'
                 );
@@ -268,7 +276,9 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
             shouldAutoPreview.current = false;
             setActiveSeries(series);
             onSeriesUpdate(series.seriesInstanceUid, {
-                start: 1, end: trueFrameCount, step: 1, total: trueFrameCount, redactions: []
+                start: 1, end: trueFrameCount, step: 1, total: trueFrameCount,
+                redactions: []
+                // uploadMethod intentionally omitted — global case-level setting applies
             }, 'select');
         } else {
             onSeriesUpdate(series.seriesInstanceUid, null, 'deselect');
@@ -395,6 +405,32 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
     const isLocked = previewJob.status === 'loading';
     const isAlreadySelected = activeSeries && !!selectedSeriesMap[activeSeries.seriesInstanceUid];
     const isSingleImage = effectiveFrameCount <= 1;
+
+    // ── Upload method enforcement ────────────────────────────────────────────────────────
+    // savedRedactions: whether this series already has redactions committed
+    const savedRedactions = activeSeries
+        ? (selectedSeriesMap[activeSeries.seriesInstanceUid]?.redactions ?? [])
+        : [];
+    const hasCommittedRedactions = savedRedactions.length > 0;
+
+    // hasMultiframe comes from the metadata cache loaded when the series is previewed
+    const activeHasMultiframe = activeMetadata?.hasMultiframe ?? false;
+
+    // Is the user culling frames (not the full series)?
+    const totalFrameCount = effectiveFrameCount;
+    const isCulling = activeSeries
+        ? (sliceConfig.start > 1 || sliceConfig.end < totalFrameCount || sliceConfig.step > 1)
+        : false;
+
+    // DICOM is not available if:
+    //   1. Redactions have been committed (PHI could be in pixel data)
+    //   2. Multiframe series + culling (partial frame extraction is not supported)
+    const dicomUnavailableReason =
+        hasCommittedRedactions ? 'Redactions applied — raw DICOM would bypass pixel-level PHI removal' :
+        (activeHasMultiframe && isCulling) ? 'Multiframe series with frame culling — cannot extract partial frames from DICOM' :
+        null;
+
+    const dicomAvailable = !dicomUnavailableReason;
 
     const hasChanges = activeSeries ? (isAlreadySelected
         ? (sliceConfig.start !== selectedSeriesMap[activeSeries.seriesInstanceUid].start ||
@@ -554,8 +590,18 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                         {/* 2. Timeline Controls */}
                         <div className="h-32 bg-slate-100 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 flex flex-col p-3 select-none">
                             <div className="flex items-center mb-3">
-                                {/* LEFT: Redaction Tool Bar */}
+                                {/* LEFT: Per-series constraint indicator + Redaction Tool Bar */}
                                 <div className="flex items-center gap-2">
+                                    {/* Shown only when this series is forced to PNG regardless of the global setting */}
+                                    {!dicomAvailable && (
+                                        <span
+                                            className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold cursor-help"
+                                            title={dicomUnavailableReason}
+                                        >
+                                            ⚠ Uploads as PNG
+                                        </span>
+                                    )}
+
                                     {previewJob.status === 'ready' && (
                                         <div className="flex items-center bg-white dark:bg-slate-800 rounded border border-slate-300 dark:border-slate-600 p-0.5 shadow-sm">
                                             <button
@@ -697,6 +743,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                 )}
             </div>
         </div>
+
     );
 };
 

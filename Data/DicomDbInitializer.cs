@@ -102,6 +102,9 @@ namespace RadiopaediaConnect.Data
             EnsureColumnExists(conn, "DraftCases", "PatientId", "TEXT");
             EnsureColumnExists(conn, "DraftCases", "PatientDob", "TEXT");
 
+            // Upload method per series: "dicom" (native DICOM via S3) or "png" (rendered ZIP)
+            EnsureColumnExists(conn, "DraftCaseSeries", "UploadMethod", "TEXT NOT NULL DEFAULT 'dicom'");
+
             var createAppLogsSql = @"
                 CREATE TABLE IF NOT EXISTS AppLogs (
                     Id           INTEGER PRIMARY KEY AUTOINCREMENT,

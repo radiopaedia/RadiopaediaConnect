@@ -74,6 +74,7 @@ namespace RadiopaediaConnect
             builder.Services.AddRadiopaediaAuthentication();
 
             builder.Services.AddTransient<DicomScu>();
+            builder.Services.AddTransient<RadiopaediaConnect.Services.Dicom.DicomAnonymizer>();
             builder.Services.AddScoped<CaseProcessorService>();
             builder.Services.AddHostedService<DicomQueueWorker>();
             builder.Services.AddHttpClient<RadiopaediaApiClient>();
