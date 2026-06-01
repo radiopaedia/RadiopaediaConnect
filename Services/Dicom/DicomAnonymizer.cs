@@ -226,10 +226,12 @@ namespace RadiopaediaConnect.Services.Dicom
             string inputDir, string outputDir, DicomUidMap uidMap)
         {
             Directory.CreateDirectory(outputDir);
-            var outputPaths = new List<string>();
 
             var dcmFiles = Directory.GetFiles(inputDir, "*.dcm");
             _logger.LogInformation("[Anon] Anonymising {Count} DICOM file(s) in {Dir}", dcmFiles.Length, inputDir);
+
+            // Anonymise every file, capturing InstanceNumber so we can order them.
+            var staged = new List<(string TempPath, int InstanceNumber)>();
 
             foreach (var filePath in dcmFiles)
             {
@@ -238,13 +240,18 @@ namespace RadiopaediaConnect.Services.Dicom
                     var source = await DicomFile.OpenAsync(filePath);
                     var anonFile = AnonymizeFile(source, uidMap);
 
-                    // SOPInstanceUID is absent from the dataset (Radiopaedia's validator
-                    // rejects it if present). Use the file-meta UID for naming instead.
+                    // InstanceNumber (0020,0013) is preserved by the allowlist; fall back to
+                    // the original source value in case the dataset read returns 0.
+                    int instanceNumber = anonFile.Dataset.GetSingleValueOrDefault(DicomTag.InstanceNumber, 0);
+                    if (instanceNumber == 0)
+                        instanceNumber = source.Dataset.GetSingleValueOrDefault(DicomTag.InstanceNumber, 0);
+
+                    // Use a temp name; we'll rename to sequential after sorting.
                     var newSopUid = anonFile.FileMetaInfo.MediaStorageSOPInstanceUID?.UID
                                    ?? Guid.NewGuid().ToString("N");
-                    var outPath = Path.Combine(outputDir, $"{newSopUid}.dcm");
-                    await anonFile.SaveAsync(outPath);
-                    outputPaths.Add(outPath);
+                    var tempPath = Path.Combine(outputDir, $"{newSopUid}.dcm");
+                    await anonFile.SaveAsync(tempPath);
+                    staged.Add((tempPath, instanceNumber));
                 }
                 catch (Exception ex)
                 {
@@ -252,7 +259,24 @@ namespace RadiopaediaConnect.Services.Dicom
                 }
             }
 
-            _logger.LogInformation("[Anon] Produced {Count} anonymised file(s) → {Dir}", outputPaths.Count, outputDir);
+            // Sort by InstanceNumber then rename to zero-padded sequential filenames so that
+            // the Radiopaedia viewer (which may rely on filename or upload order) shows slices
+            // in the correct anatomical sequence.
+            staged.Sort((a, b) => a.InstanceNumber.CompareTo(b.InstanceNumber));
+
+            int digits = Math.Max(5, staged.Count.ToString().Length); // e.g. "00001"
+            var outputPaths = new List<string>(staged.Count);
+
+            for (int i = 0; i < staged.Count; i++)
+            {
+                var seqName = (i + 1).ToString().PadLeft(digits, '0') + ".dcm";
+                var finalPath = Path.Combine(outputDir, seqName);
+                File.Move(staged[i].TempPath, finalPath, overwrite: true);
+                outputPaths.Add(finalPath);
+            }
+
+            _logger.LogInformation("[Anon] Produced {Count} anonymised file(s) → {Dir} (ordered by InstanceNumber)",
+                outputPaths.Count, outputDir);
             return outputPaths;
         }
 

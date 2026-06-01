@@ -166,11 +166,13 @@ namespace RadiopaediaConnect.Services
         /// Uploads a set of anonymized DICOM files to Radiopaedia via the S3 large-file pipeline.
         /// See: https://radiopaedia.org/api-documentation#upload-large-file
         ///
-        /// Step 1 — POST /direct_s3_uploads  { sha256: [...] }
-        ///           → array of { id, url, status? } — one entry per file, same order.
-        ///           Files with status "already_uploaded" (same SHA-256 already on S3) skip Step 2.
+        /// Per-file pipeline (hash → presigned URL → PUT) to keep the S3 URL fresh:
         ///
-        /// Step 2 — PUT presigned S3 URL  (binary DICOM, Content-Type: application/dicom)
+        /// For each file:
+        ///   Step 1 — POST /direct_s3_uploads  { sha256: [hash] }
+        ///             → { id, url, status? }
+        ///             Files with status "already_uploaded" skip the PUT.
+        ///   Step 2 — PUT presigned S3 URL  (binary DICOM, Content-Type: application/dicom)
         ///
         /// Step 3 — POST /image_preparation/{caseId}/studies/{studyId}/series
         ///           { image_format, series: { root_index }, stack_upload: { uploaded_data: [id…] } }
@@ -185,29 +187,36 @@ namespace RadiopaediaConnect.Services
             _logger.LogInformation("[API] S3 upload: {Count} DICOM file(s) → Case {CaseId} / Study {StudyId}",
                 dicomFilePaths.Count, caseId, studyId);
 
-            // ── Step 1: Compute SHA-256 hashes for all files (batch request) ────────────
-            var fileHashes = new List<(string FilePath, string Hash)>(dicomFilePaths.Count);
+            // Use a separate HttpClient — S3 is a different host and must not receive
+            // the Radiopaedia Authorization header.
+            using var s3Client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+
+            // ── Step 1: Hash all files and request presigned URLs in one batch call ────────
+            // Presigned URLs are valid for 900s. With 4 concurrent PUTs the total upload time
+            // for large series is well within that window.
+            var sw = Stopwatch.StartNew();
+
+            var hashes = new List<string>(dicomFilePaths.Count);
             foreach (var filePath in dicomFilePaths)
             {
                 await using var fs = File.OpenRead(filePath);
                 var hashBytes = await SHA256.HashDataAsync(fs);
-                fileHashes.Add((filePath, Convert.ToHexString(hashBytes).ToLowerInvariant()));
+                hashes.Add(Convert.ToHexString(hashBytes).ToLowerInvariant());
             }
 
-            // ── Step 2: Request presigned S3 URLs for all files in one call ─────────────
-            var initPayload = new { sha256 = fileHashes.Select(f => f.Hash).ToArray() };
-            var initJson = JsonSerializer.Serialize(initPayload);
-            var initContent = new StringContent(initJson, Encoding.UTF8, "application/json");
+            var initPayload = new { sha256 = hashes.ToArray() };
+            var initContent = new StringContent(
+                JsonSerializer.Serialize(initPayload), Encoding.UTF8, "application/json");
 
-            var sw = Stopwatch.StartNew();
+            sw.Restart();
             // Note: /direct_s3_uploads is at root, not under /api/v1/ — use absolute URL.
             var initResponse = await _httpClient.PostAsync(
                 "https://radiopaedia.org/direct_s3_uploads", initContent);
             sw.Stop();
 
             var initBody = await initResponse.Content.ReadAsStringAsync();
-            _logger.LogInformation("[API] direct_s3_uploads {Ms}ms → {Status} | body: {Body}",
-                sw.ElapsedMilliseconds, (int)initResponse.StatusCode, initBody);
+            _logger.LogInformation("[API] direct_s3_uploads ({Count} files) {Ms}ms → {Status}",
+                dicomFilePaths.Count, sw.ElapsedMilliseconds, (int)initResponse.StatusCode);
 
             if (!initResponse.IsSuccessStatusCode)
             {
@@ -218,22 +227,30 @@ namespace RadiopaediaConnect.Services
             using var initDoc = JsonDocument.Parse(initBody);
             var uploadsArray = initDoc.RootElement.GetProperty("uploads");
 
-            if (uploadsArray.GetArrayLength() != fileHashes.Count)
+            if (uploadsArray.GetArrayLength() != dicomFilePaths.Count)
                 throw new Exception(
-                    $"direct_s3_uploads returned {uploadsArray.GetArrayLength()} entries for {fileHashes.Count} files");
+                    $"direct_s3_uploads returned {uploadsArray.GetArrayLength()} entries for {dicomFilePaths.Count} files");
 
-            // ── Step 3: PUT each file to its presigned S3 URL ────────────────────────────
-            // Use a separate HttpClient — S3 is a different host and must not receive
-            // the Radiopaedia Authorization header.
-            using var s3Client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-            var uploadedIds = new List<long>(fileHashes.Count);
+            // ── Step 2: PUT files concurrently (max 4 in flight) ─────────────────────────
+            // Results are keyed by index to preserve order for the attach step.
+            const int MaxConcurrency = 4;
+            using var semaphore = new SemaphoreSlim(MaxConcurrency);
 
-            for (int i = 0; i < fileHashes.Count; i++)
+            var uploadedIds = new long[dicomFilePaths.Count];
+            var putTasks = new List<Task>(dicomFilePaths.Count);
+            // Capture uploads array as cloned elements before the JsonDocument is disposed.
+            var uploadEntries = Enumerable.Range(0, dicomFilePaths.Count)
+                .Select(i => uploadsArray[i].Clone())
+                .ToList();
+
+            for (int i = 0; i < dicomFilePaths.Count; i++)
             {
-                var (filePath, _) = fileHashes[i];
-                var upload = uploadsArray[i];
+                var idx = i;
+                var filePath = dicomFilePaths[idx];
+                var fileName = Path.GetFileName(filePath);
+                var upload = uploadEntries[idx];
                 var uploadId = upload.GetProperty("id").GetInt64();
-                uploadedIds.Add(uploadId);
+                uploadedIds[idx] = uploadId;
 
                 bool alreadyUploaded =
                     upload.TryGetProperty("status", out var statusEl) &&
@@ -241,44 +258,56 @@ namespace RadiopaediaConnect.Services
 
                 if (alreadyUploaded)
                 {
-                    _logger.LogInformation("[API] {File} already on S3 (id={Id}), skipping PUT",
-                        Path.GetFileName(filePath), uploadId);
+                    _logger.LogInformation("[API] {File} already on S3 (id={Id}), skipping PUT", fileName, uploadId);
                     continue;
                 }
 
                 var presignedUrl = upload.GetProperty("url").GetString()!;
 
-                await using var fileStream = File.OpenRead(filePath);
-                using var fileContent = new StreamContent(fileStream);
-                fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/dicom");
-
-                sw.Restart();
-                var s3Response = await s3Client.PutAsync(presignedUrl, fileContent);
-                sw.Stop();
-
-                _logger.LogInformation("[API] S3 PUT {File} (id={Id}) → {Status} ({Ms}ms)",
-                    Path.GetFileName(filePath), uploadId, (int)s3Response.StatusCode, sw.ElapsedMilliseconds);
-
-                if (!s3Response.IsSuccessStatusCode)
+                putTasks.Add(Task.Run(async () =>
                 {
-                    var s3Err = await s3Response.Content.ReadAsStringAsync();
-                    _logger.LogError("[API] S3 PUT failed for {File}: {Body}", Path.GetFileName(filePath), s3Err);
-                    throw new Exception(
-                        $"S3 PUT failed for {Path.GetFileName(filePath)}: {s3Response.StatusCode}");
-                }
+                    await semaphore.WaitAsync();
+                    try
+                    {
+                        await using var fileStream = File.OpenRead(filePath);
+                        using var fileContent = new StreamContent(fileStream);
+                        fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/dicom");
+
+                        var putSw = Stopwatch.StartNew();
+                        var s3Response = await s3Client.PutAsync(presignedUrl, fileContent);
+                        putSw.Stop();
+
+                        _logger.LogInformation("[API] S3 PUT {File} (id={Id}) → {Status} ({Ms}ms)",
+                            fileName, uploadId, (int)s3Response.StatusCode, putSw.ElapsedMilliseconds);
+
+                        if (!s3Response.IsSuccessStatusCode)
+                        {
+                            var s3Err = await s3Response.Content.ReadAsStringAsync();
+                            _logger.LogError("[API] S3 PUT failed for {File}: {Body}", fileName, s3Err);
+                            throw new Exception($"S3 PUT failed for {fileName}: {s3Response.StatusCode}");
+                        }
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }));
             }
 
-            // ── Step 4: Attach all uploaded files to the study as a series ───────────────
+            await Task.WhenAll(putTasks);
+            var uploadedIds_ordered = uploadedIds.ToList();
+
+            // ── Step 3: Attach all uploaded files to the study as a series ───────────────
             // root_index is 0-based: the API docs show root_index:1 for a 3-file upload
             // (middle frame). Math.Max(1,…) was wrong — for a single file the only valid
             // index is 0, and sending 1 causes the viewer to reference a non-existent frame.
-            int rootIndex = uploadedIds.Count > 1 ? uploadedIds.Count / 2 : 0;
+            int rootIndex = uploadedIds_ordered.Count > 1 ? uploadedIds_ordered.Count / 2 : 0;
 
             var attachPayload = new
             {
                 image_format = "application/dicom",
                 series = new { root_index = rootIndex },
-                stack_upload = new { uploaded_data = uploadedIds.ToArray() }
+                stack_upload = new { uploaded_data = uploadedIds_ordered.ToArray() }
             };
 
             var attachJson = JsonSerializer.Serialize(attachPayload);
@@ -305,7 +334,7 @@ namespace RadiopaediaConnect.Services
 
             _logger.LogInformation(
                 "[API] {Count} DICOM file(s) attached to Case {CaseId} / Study {StudyId}",
-                uploadedIds.Count, caseId, studyId);
+                uploadedIds_ordered.Count, caseId, studyId);
         }
 
         public async Task MarkUploadFinishedAsync(string caseId, string username)
