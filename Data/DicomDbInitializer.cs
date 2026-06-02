@@ -120,6 +120,7 @@ namespace RadiopaediaConnect.Data
             ";
 
             conn.Execute(createAppLogsSql);
+            EnsureColumnExists(conn, "AppLogs", "CaseId", "TEXT");
         }
 
         private static void EnsureColumnExists(SqliteConnection conn, string tableName, string columnName, string columnDef)

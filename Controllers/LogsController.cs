@@ -52,6 +52,39 @@ namespace RadiopaediaConnect.Controllers
             });
         }
 
+        [HttpGet("case/{caseId:guid}")]
+        public async Task<IActionResult> GetCaseLogs(
+            Guid caseId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 100)
+        {
+            if (!AuthorizeAdmin(_sessionService)) return Unauthorized(new { message = "Invalid admin session." });
+
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 1;
+            if (pageSize > 500) pageSize = 500;
+
+            var (items, total) = await _logsRepository.QueryByCaseAsync(caseId, page, pageSize);
+
+            return Ok(new
+            {
+                items = items.Select(l => new
+                {
+                    l.Id,
+                    l.TimestampUtc,
+                    l.Level,
+                    l.Category,
+                    l.Message,
+                    l.Exception,
+                    l.JobId,
+                }),
+                totalCount = total,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(total / (double)pageSize),
+            });
+        }
+
         [HttpDelete]
         public async Task<IActionResult> PruneLogs([FromQuery] int retentionDays = 30)
         {

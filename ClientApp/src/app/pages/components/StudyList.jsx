@@ -14,7 +14,7 @@ const StudyList = ({
             ? { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
             : { year: 'numeric', month: 'short', day: 'numeric' };
 
-        return new Date(dateString).toLocaleDateString('en-US', opts);
+        return new Date(dateString).toLocaleDateString('en-AU', opts);
     };
 
     const getModalityColor = (modality) => {

@@ -237,15 +237,110 @@ namespace RadiopaediaConnect.Data
         {
             using var conn = GetConnection();
             var sql = @"
-                SELECT 
-                    Id, Title, Presentation, Age, Sex, Status, 
+                SELECT
+                    Id, Title, Presentation, Age, Sex, Status,
                     CreatedAt, RadiopaediaCaseId, ErrorMessage,
                     PatientName, PatientId, PatientDob
-                FROM DraftCases 
-                WHERE Username = @Username 
+                FROM DraftCases
+                WHERE Username = @Username
                 ORDER BY CreatedAt DESC";
 
             return await conn.QueryAsync<CaseListItemDto>(sql, new { Username = username });
+        }
+
+        public async Task<IEnumerable<AdminCaseListItemDto>> GetAllCasesAsync()
+        {
+            using var conn = GetConnection();
+            var sql = @"
+                SELECT
+                    Id, Username, Title, Presentation, Age, Sex, Status,
+                    CreatedAt, RadiopaediaCaseId, ErrorMessage,
+                    PatientName, PatientId, PatientDob
+                FROM DraftCases
+                ORDER BY CreatedAt DESC";
+
+            return await conn.QueryAsync<AdminCaseListItemDto>(sql);
+        }
+
+        public async Task<CaseDetailDto?> GetCaseDetailAdminAsync(Guid caseId)
+        {
+            using var conn = GetConnection();
+
+            var sqlCase = @"
+                SELECT Id, Title, Presentation, System, Age, Sex, DiagnosticCertainty,
+                       CaseDiscussion, Status, CreatedAt, RadiopaediaCaseId, ErrorMessage,
+                       PatientName, PatientId, PatientDob
+                FROM DraftCases
+                WHERE Id = @Id";
+
+            var draft = await conn.QueryFirstOrDefaultAsync<CaseDetailDto>(sqlCase, new { Id = caseId });
+            if (draft == null) return null;
+
+            var sqlStudies = @"
+                SELECT Id, StudyInstanceUid, RemoteNodeName, Modality, Findings
+                FROM DraftCaseStudies
+                WHERE DraftCaseId = @CaseId";
+
+            var studies = await conn.QueryAsync(sqlStudies, new { CaseId = caseId });
+
+            foreach (var study in studies)
+            {
+                var studyDto = new CaseDetailStudyDto
+                {
+                    Id = (long)study.Id,
+                    StudyInstanceUid = study.StudyInstanceUid ?? string.Empty,
+                    RemoteNodeName = study.RemoteNodeName,
+                    Modality = study.Modality,
+                    Findings = study.Findings
+                };
+
+                var sqlSeries = @"
+                    SELECT Id, SeriesInstanceUid, SeriesDescription, Modality,
+                           StartFrame, EndFrame, StepFrame, RedactionsJson
+                    FROM DraftCaseSeries
+                    WHERE DraftCaseStudyId = @StudyId";
+
+                var seriesRecords = await conn.QueryAsync(sqlSeries, new { StudyId = studyDto.Id });
+
+                foreach (var series in seriesRecords)
+                {
+                    int start = (int)(series.StartFrame ?? 1);
+                    int end = (int)(series.EndFrame ?? 1);
+                    int step = (int)(series.StepFrame ?? 1);
+                    step = step < 1 ? 1 : step;
+
+                    int selectedCount = ((end - start) / step) + 1;
+
+                    int redactionCount = 0;
+                    string? redactionsJson = series.RedactionsJson;
+                    if (!string.IsNullOrEmpty(redactionsJson))
+                    {
+                        try
+                        {
+                            var redactions = JsonSerializer.Deserialize<List<RedactionZoneDto>>(redactionsJson);
+                            redactionCount = redactions?.Count ?? 0;
+                        }
+                        catch { }
+                    }
+
+                    studyDto.Series.Add(new CaseDetailSeriesDto
+                    {
+                        Id = (long)series.Id,
+                        SeriesInstanceUid = series.SeriesInstanceUid ?? string.Empty,
+                        SeriesDescription = series.SeriesDescription,
+                        Modality = series.Modality,
+                        StartFrame = start,
+                        EndFrame = end,
+                        StepFrame = step,
+                        SelectedFrameCount = selectedCount,
+                        RedactionCount = redactionCount
+                    });
+                }
+
+                draft.Studies.Add(studyDto);
+            }
+
+            return draft;
         }
 
         public async Task<IEnumerable<CaseListItemDto>> GetCasesByPatientIdAsync(string patientId)

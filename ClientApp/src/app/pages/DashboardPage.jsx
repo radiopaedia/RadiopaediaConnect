@@ -578,7 +578,7 @@ const DashboardPage = ({ user, onLogout }) => {
                                             <span className="text-sm font-mono text-slate-500">{patientInfo?.id}</span>
                                         </div>
                                         <div className="text-sm text-slate-600 dark:text-slate-300">
-                                            {patientInfo?.sex} &middot; {new Date(patientInfo?.dob).toLocaleDateString()}
+                                            {patientInfo?.sex} &middot; {new Date(patientInfo?.dob).toLocaleDateString('en-AU')}
                                         </div>
                                     </div>
                                     <button
@@ -645,7 +645,7 @@ const DashboardPage = ({ user, onLogout }) => {
                                                             </td>
                                                             <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-500 dark:text-slate-400">
                                                                 <div className="flex flex-col">
-                                                                    <span>{new Date(study.studyDate).toLocaleDateString()}</span>
+                                                                    <span>{new Date(study.studyDate).toLocaleDateString('en-AU')}</span>
                                                                     {isActive && !hasSelectedSeries && <span className="text-[10px] text-indigo-600 font-bold uppercase">Viewing</span>}
                                                                 </div>
                                                             </td>
@@ -693,7 +693,7 @@ const DashboardPage = ({ user, onLogout }) => {
                                     {activeStudy?.studyDescription}
                                 </h2>
                                 <span className="text-sm text-slate-500">
-                                    {activeStudy ? new Date(activeStudy.studyDate).toLocaleDateString() : ''}
+                                    {activeStudy ? new Date(activeStudy.studyDate).toLocaleDateString('en-AU') : ''}
                                 </span>
                             </div>
 

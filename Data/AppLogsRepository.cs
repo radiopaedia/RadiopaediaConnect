@@ -16,8 +16,8 @@ namespace RadiopaediaConnect.Data
         {
             using var conn = new SqliteConnection(_connectionString);
             await conn.ExecuteAsync(
-                @"INSERT INTO AppLogs (TimestampUtc, Level, Category, Message, Exception, JobId)
-                  VALUES (@TimestampUtc, @Level, @Category, @Message, @Exception, @JobId)",
+                @"INSERT INTO AppLogs (TimestampUtc, Level, Category, Message, Exception, JobId, CaseId)
+                  VALUES (@TimestampUtc, @Level, @Category, @Message, @Exception, @JobId, @CaseId)",
                 entry);
         }
 
@@ -57,6 +57,32 @@ namespace RadiopaediaConnect.Data
             var items = (await conn.QueryAsync<AppLogEntity>(
                 $"SELECT * FROM AppLogs {where} ORDER BY Id DESC LIMIT @Limit OFFSET @Offset",
                 parameters)).ToList();
+
+            return (items, total);
+        }
+
+        public async Task<(List<AppLogEntity> Items, int TotalCount)> QueryByCaseAsync(
+            Guid caseId, int page, int pageSize)
+        {
+            // Primary: CaseId column stamped directly on every log entry during job processing.
+            // Fallback LIKE: catches entries written before the CaseId column was added where
+            // the case UUID still appears somewhere in the message text.
+            const string whereClause = @"
+                WHERE al.CaseId = @CaseId COLLATE NOCASE
+                   OR al.Message LIKE '%' || @CaseId || '%'";
+
+            var p = new { CaseId = caseId.ToString() };
+            var offset = (page - 1) * pageSize;
+
+            using var conn = new SqliteConnection(_connectionString);
+
+            var total = await conn.ExecuteScalarAsync<int>(
+                $"SELECT COUNT(DISTINCT al.Id) FROM AppLogs al {whereClause}", p);
+
+            var items = (await conn.QueryAsync<AppLogEntity>(
+                $@"SELECT DISTINCT al.* FROM AppLogs al {whereClause}
+                   ORDER BY al.Id DESC LIMIT @Limit OFFSET @Offset",
+                new { CaseId = caseId.ToString(), Limit = pageSize, Offset = offset })).ToList();
 
             return (items, total);
         }

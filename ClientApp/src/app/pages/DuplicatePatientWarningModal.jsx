@@ -12,7 +12,7 @@ const DuplicatePatientWarningModal = ({
 }) => {
     const formatDate = (dateString) => {
         if (!dateString) return '';
-        return new Date(dateString).toLocaleDateString('en-US', {
+        return new Date(dateString).toLocaleDateString('en-AU', {
             year: 'numeric',
             month: 'short',
             day: 'numeric'

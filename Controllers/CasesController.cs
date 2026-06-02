@@ -3,22 +3,27 @@ using RadiopaediaConnect.Data;
 using RadiopaediaConnect.Models;
 using System.Security.Claims;
 using RadiopaediaConnect.Services;
+using RadiopaediaConnect.Logging;
 
 namespace RadiopaediaConnect.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    public class CasesController : ControllerBase
+    public class CasesController : AdminControllerBase
     {
         private readonly DicomRepository _repository;
+        private readonly AppLogsRepository _logsRepository;
         private readonly ILogger<CasesController> _logger;
         private readonly CaseProcessorService _caseProcessor;
+        private readonly AdminSessionService _sessionService;
 
-        public CasesController(DicomRepository repository, ILogger<CasesController> logger, CaseProcessorService caseProcessor)
+        public CasesController(DicomRepository repository, AppLogsRepository logsRepository, ILogger<CasesController> logger, CaseProcessorService caseProcessor, AdminSessionService sessionService)
         {
             _repository = repository;
+            _logsRepository = logsRepository;
             _logger = logger;
             _caseProcessor = caseProcessor;
+            _sessionService = sessionService;
         }
 
         /// <summary>
@@ -109,6 +114,81 @@ namespace RadiopaediaConnect.Controllers
                 _logger.LogError(ex, "Failed to check patient cases for {PatientId}", patientId);
                 return StatusCode(500, "Failed to check patient cases.");
             }
+        }
+
+        [HttpGet("all-cases")]
+        public async Task<IActionResult> GetAllCases()
+        {
+            if (!AuthorizeAdmin(_sessionService)) return Unauthorized(new { message = "Invalid admin session." });
+
+            try
+            {
+                var cases = await _repository.GetAllCasesAsync();
+                return Ok(cases);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve all cases");
+                return StatusCode(500, "Failed to retrieve cases.");
+            }
+        }
+
+        [HttpGet("{caseId:guid}/admin")]
+        public async Task<IActionResult> GetCaseDetailAdmin(Guid caseId)
+        {
+            if (!AuthorizeAdmin(_sessionService)) return Unauthorized(new { message = "Invalid admin session." });
+
+            try
+            {
+                var caseDetail = await _repository.GetCaseDetailAdminAsync(caseId);
+                if (caseDetail == null) return NotFound("Case not found.");
+                return Ok(caseDetail);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve case detail for {CaseId}", caseId);
+                return StatusCode(500, "Failed to retrieve case details.");
+            }
+        }
+
+        [HttpGet("{caseId:guid}/logs")]
+        public async Task<IActionResult> GetCaseLogs(
+            Guid caseId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 100)
+        {
+            var username = User.FindFirst("urn:radiopaedia:username")?.Value;
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized("User session invalid. Please log in again.");
+
+            // Verify the case belongs to this user before returning its logs
+            var caseDetail = await _repository.GetCaseDetailAsync(caseId, username);
+            if (caseDetail == null)
+                return NotFound("Case not found.");
+
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 1;
+            if (pageSize > 500) pageSize = 500;
+
+            var (items, total) = await _logsRepository.QueryByCaseAsync(caseId, page, pageSize);
+
+            return Ok(new
+            {
+                items = items.Select(l => new
+                {
+                    l.Id,
+                    l.TimestampUtc,
+                    l.Level,
+                    l.Category,
+                    l.Message,
+                    l.Exception,
+                    l.JobId,
+                }),
+                totalCount = total,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(total / (double)pageSize),
+            });
         }
 
         [HttpPost("submit")]

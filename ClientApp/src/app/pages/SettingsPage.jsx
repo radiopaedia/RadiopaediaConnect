@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import LogsTab from './components/LogsTab';
+import AllCasesTab from './components/AllCasesTab';
 import { AnonymisationContent } from './components/AnonymisationDrawer';
 
 const TABS = [
@@ -9,6 +10,7 @@ const TABS = [
     { id: 'radiopaedia', label: 'Radiopaedia' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'logs', label: 'Logs' },
+    { id: 'all-cases', label: 'All Cases' },
     { id: 'anonymisation', label: 'Anonymisation' },
     { id: 'password', label: 'Change Password' },
 ];
@@ -357,7 +359,7 @@ const SettingsPage = () => {
                 </div>
             )}
 
-            <div className="container mx-auto max-w-4xl p-4">
+            <div className="container mx-auto max-w-6xl p-4">
                 {/* Tabs */}
                 <div className="flex space-x-1 bg-white dark:bg-slate-800 rounded-lg p-1 shadow-sm mb-6 overflow-x-auto">
                     {TABS.map((tab) => (
@@ -828,6 +830,11 @@ const SettingsPage = () => {
                     {/* ── Logs Tab ────────────────────────────────── */}
                     {activeTab === 'logs' && (
                         <LogsTab />
+                    )}
+
+                    {/* ── All Cases Tab ────────────────────────────── */}
+                    {activeTab === 'all-cases' && (
+                        <AllCasesTab />
                     )}
 
                     {/* ── Anonymisation Tab ─────────────────────── */}

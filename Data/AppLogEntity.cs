@@ -9,5 +9,6 @@ namespace RadiopaediaConnect.Data
         public string Message      { get; set; } = string.Empty;
         public string? Exception   { get; set; }
         public string? JobId       { get; set; }
+        public string? CaseId      { get; set; }
     }
 }

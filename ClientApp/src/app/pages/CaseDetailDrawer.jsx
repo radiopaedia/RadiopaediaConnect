@@ -54,7 +54,7 @@ const DIAGNOSTIC_CERTAINTY_MAP = {
     1: "Possible", 2: "Probable", 3: "Almost Certain", 4: "Certain", 5: "Not applicable"
 };
 
-const CaseDetailDrawer = ({ isOpen, onClose, caseId, zIndex = 50 }) => {
+const CaseDetailDrawer = ({ isOpen, onClose, caseId, adminMode = false, zIndex = 50 }) => {
     const [caseDetail, setCaseDetail] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -87,7 +87,8 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId, zIndex = 50 }) => {
         setLoading(true);
         setError(null);
         try {
-            const response = await fetch(`/api/cases/${caseId}`);
+            const url = adminMode ? `/api/cases/${caseId}/admin` : `/api/cases/${caseId}`;
+            const response = await fetch(url);
             if (!response.ok) {
                 throw new Error('Failed to fetch case details');
             }
@@ -102,7 +103,7 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId, zIndex = 50 }) => {
 
     const formatDate = (dateString) => {
         if (!dateString) return '';
-        return new Date(dateString).toLocaleDateString('en-US', {
+        return new Date(dateString).toLocaleDateString('en-AU', {
             year: 'numeric',
             month: 'short',
             day: 'numeric',
@@ -153,9 +154,14 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId, zIndex = 50 }) => {
                             <div className="flex h-full flex-col bg-white dark:bg-slate-800 shadow-xl">
                                 {/* Header */}
                                 <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50">
-                                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                                        Case Details
-                                    </h2>
+                                    <div>
+                                        <h2 className="text-lg font-bold text-slate-900 dark:text-white">Case Details</h2>
+                                        {caseDetail && (
+                                            <p className="text-xs font-mono text-slate-400 dark:text-slate-500 mt-0.5">
+                                                {caseDetail.id}
+                                            </p>
+                                        )}
+                                    </div>
                                     <button
                                         onClick={onClose}
                                         className="rounded-md p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
@@ -196,16 +202,13 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId, zIndex = 50 }) => {
                                                     </h4>
                                                     <div className="text-sm">
                                                         <div className="font-medium text-slate-900 dark:text-white">
-                                                            {caseDetail.patientName || '\u2014'}
+                                                            {(caseDetail.patientName || '\u2014').replace(/\^/g, ' ')}
                                                         </div>
                                                         <div className="text-slate-600 dark:text-slate-400 mt-1 flex flex-wrap gap-3">
                                                             {caseDetail.patientId && (
                                                                 <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600">
                                                                     ID: {caseDetail.patientId}
                                                                 </span>
-                                                            )}
-                                                            {caseDetail.patientDob && (
-                                                                <span>DOB: {formatDate(caseDetail.patientDob)}</span>
                                                             )}
                                                         </div>
                                                     </div>

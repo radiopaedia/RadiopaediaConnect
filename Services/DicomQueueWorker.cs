@@ -1,4 +1,5 @@
 ﻿using RadiopaediaConnect.Data;
+using RadiopaediaConnect.Logging;
 using RadiopaediaConnect.Models;
 using RadiopaediaConnect.Services.Dicom;
 using System.Runtime.InteropServices;
@@ -86,6 +87,10 @@ namespace RadiopaediaConnect.Services
 
         private async Task ProcessJobWrapperAsync(DicomJob job)
         {
+            // Stamp every log entry in this job with JobId + CaseId via AsyncLocal so the
+            // case logs drawer and job filter can both query directly by column, no joins needed.
+            using var _ = JobLogContext.Set(job.Id.ToString(), job.ResourceId ?? string.Empty);
+
             try
             {
                 using (var scope = _scopeFactory.CreateScope())

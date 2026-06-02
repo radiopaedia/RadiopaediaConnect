@@ -19,7 +19,7 @@ const LEVELS = ['', 'Error', 'Warning', 'Information'];
 function formatUtc(ts) {
     if (!ts) return '';
     try {
-        return new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });
+        return new Date(ts).toLocaleString('en-AU', { dateStyle: 'short', timeStyle: 'medium' });
     } catch {
         return ts;
     }

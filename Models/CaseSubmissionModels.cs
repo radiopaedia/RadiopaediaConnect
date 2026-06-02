@@ -130,6 +130,11 @@ namespace RadiopaediaConnect.Models
         public DateTime? PatientDob { get; set; }
     }
 
+    public class AdminCaseListItemDto : CaseListItemDto
+    {
+        public string Username { get; set; } = string.Empty;
+    }
+
     public class CaseDetailDto
     {
         public Guid Id { get; set; }

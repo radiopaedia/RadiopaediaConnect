@@ -12,21 +12,21 @@ namespace RadiopaediaConnect.Logging
         private readonly AppLogsRepository _repository;
 
         // Category prefixes that qualify for Information-level capture
-        private static readonly string[] AllowedInfoPrefixes = new[]
-        {
+        private static readonly string[] AllowedInfoPrefixes =
+        [
             "RadiopaediaConnect.Services",
             "RadiopaediaConnect.Controllers",
             "RadiopaediaConnect.Data",
             "RadiopaediaConnect.Extensions",
-        };
+        ];
 
         // Category prefixes that are always excluded (even for Warning/Error)
-        private static readonly string[] BlockedPrefixes = new[]
-        {
+        private static readonly string[] BlockedPrefixes =
+        [
             "Microsoft.",
             "System.",
             "FellowOakDicom.",
-        };
+        ];
 
         public DatabaseLoggerProvider(AppLogsRepository repository)
         {
@@ -44,22 +44,16 @@ namespace RadiopaediaConnect.Logging
 
         internal bool IsEnabled(string categoryName, LogLevel logLevel)
         {
-            // Never log Debug/Trace
             if (logLevel < LogLevel.Information) return false;
 
-            // Block noisy framework categories at all levels
             foreach (var blocked in BlockedPrefixes)
                 if (categoryName.StartsWith(blocked, StringComparison.Ordinal)) return false;
 
-            // Always capture Warning and above from any category
             if (logLevel >= LogLevel.Warning) return true;
 
-            // For Information: only our own services
             if (logLevel == LogLevel.Information)
-            {
                 foreach (var prefix in AllowedInfoPrefixes)
                     if (categoryName.StartsWith(prefix, StringComparison.Ordinal)) return true;
-            }
 
             return false;
         }
@@ -67,7 +61,7 @@ namespace RadiopaediaConnect.Logging
         internal static string ExtractCategory(string message)
         {
             if (message.StartsWith("[PIPELINE]") || message.StartsWith("[Processor]") ||
-                message.StartsWith("[Upload Worker]"))
+                message.StartsWith("[Upload Worker]") || message.StartsWith("[Anon]"))
                 return "Pipeline";
             if (message.StartsWith("[QueueWorker]") || message.StartsWith("[Purge]"))
                 return "Pipeline";
@@ -85,6 +79,8 @@ namespace RadiopaediaConnect.Logging
             return "General";
         }
 
+        private static int _drainErrorCount = 0;
+
         private async Task DrainAsync()
         {
             await foreach (var entry in _channel.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
@@ -92,10 +88,15 @@ namespace RadiopaediaConnect.Logging
                 try
                 {
                     await _repository.InsertAsync(entry).ConfigureAwait(false);
+                    _drainErrorCount = 0;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Swallow — DB errors must not crash the drain loop
+                    // Print to stderr so schema/column errors are visible during development
+                    // without crashing the drain loop or creating a logging recursion.
+                    var count = System.Threading.Interlocked.Increment(ref _drainErrorCount);
+                    if (count <= 3)
+                        Console.Error.WriteLine($"[DatabaseLogger] INSERT failed ({count}): {ex.Message}");
                 }
             }
         }
@@ -124,7 +125,7 @@ namespace RadiopaediaConnect.Logging
 
         public bool IsEnabled(LogLevel logLevel) => _provider.IsEnabled(_categoryName, logLevel);
 
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
@@ -138,18 +139,14 @@ namespace RadiopaediaConnect.Logging
             {
                 TimestampUtc = DateTime.UtcNow.ToString("o"),
                 Level = logLevel.ToString(),
-                Category = DatabaseLoggerProvider.ExtractCategory(message),
-                Message = message,
+                Category = DatabaseLoggerProvider.ExtractCategory(message ?? string.Empty),
+                Message = message ?? exception?.Message ?? string.Empty,
                 Exception = exception?.ToString(),
+                JobId = JobLogContext.CurrentJobId,
+                CaseId = JobLogContext.CurrentCaseId,
             };
 
             _channel.Writer.TryWrite(entry);
-        }
-
-        private sealed class NullScope : IDisposable
-        {
-            public static readonly NullScope Instance = new();
-            public void Dispose() { }
         }
     }
 }
