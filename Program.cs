@@ -74,6 +74,13 @@ namespace RadiopaediaConnect
             builder.Services.AddRadiopaediaAuthentication();
 
             builder.Services.AddTransient<DicomScu>();
+            // DICOM anonymiser keep-list — loaded once from Config/dicom-allowlist.json. Registered
+            // as a singleton (eagerly resolved at startup below) so the anonymiser and the
+            // /api/anonymisation/policy endpoint share a single source of truth.
+            builder.Services.AddSingleton(sp =>
+                RadiopaediaConnect.Services.Dicom.DicomAllowlist.Load(
+                    RadiopaediaConnect.Services.Dicom.DicomAllowlist.DefaultPath,
+                    sp.GetRequiredService<ILogger<RadiopaediaConnect.Services.Dicom.DicomAllowlist>>()));
             builder.Services.AddTransient<RadiopaediaConnect.Services.Dicom.DicomAnonymizer>();
             builder.Services.AddScoped<CaseProcessorService>();
             builder.Services.AddHostedService<DicomQueueWorker>();
@@ -85,6 +92,10 @@ namespace RadiopaediaConnect
             DbInitializer.Initialize(connectionString);
             DicomDbInitializer.Initialize(connectionString);
             SettingsDbInitializer.Initialize(connectionString);
+
+            // Eagerly load the anonymiser allowlist so a missing/invalid file fails startup loudly
+            // (fail-closed) rather than surfacing only when the first series is anonymised.
+            _ = app.Services.GetRequiredService<RadiopaediaConnect.Services.Dicom.DicomAllowlist>();
 
             // Wire persistent database logger
             var logRepo = app.Services.GetRequiredService<AppLogsRepository>();

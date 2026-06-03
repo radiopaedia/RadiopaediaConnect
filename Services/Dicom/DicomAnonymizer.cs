@@ -7,190 +7,38 @@ namespace RadiopaediaConnect.Services.Dicom
     /// re-anonymiser (github.com/radiopaedia/dicom-anonymiser).
     ///
     /// Strategy — mirrors Radiopaedia's open-source policy exactly:
-    ///   • Default action is REMOVE — only explicitly approved tags reach the output.
+    ///   • Default action is REMOVE — only explicitly approved tags reach the output. The approved
+    ///     ("keep") tags live in an external file, Config/dicom-allowlist.json, loaded at runtime
+    ///     and selected by HEX (group,element) — not by fo-dicom constant name. See DicomAllowlist.
     ///   • A small set of PHI tags that DICOM IOD rules require to be present are written as
     ///     EMPTY strings rather than removed (Radiopaedia calls this "replace").
     ///   • UIDs are replaced with synthetic values kept consistent within a series via DicomUidMap.
     ///   • (0012,0062) Patient Identity Removed = YES and (0012,0063) De-identification Method
     ///     are added to every output file per DICOM PS3.15 Annex E.
     ///
-    /// Critical fixes vs. first version:
-    ///   • (0008,0005) Specific Character Set — added; required when any string tag is present.
-    ///   • (0028,0006) Planar Configuration  — added; required for RGB / colour images (US etc.).
-    ///   • (0020,0052) Frame of Reference UID — now in uidMap; type-1 required for CT/MR IODs.
-    ///   • PHI type-2 tags (PatientName, StudyDate …) zeroed rather than removed, satisfying
-    ///     strict DICOM conformance checks that validators run before serving files to viewers.
-    ///
     /// Tag selection informed by:
-    ///   - github.com/radiopaedia/dicom-anonymiser  (broadlySafeFieldsPolicy + module policies)
+    ///   - github.com/radiopaedia/dicom-anonymiser  (Policies.ts "keep" actions)
     ///   - DICOM PS3.3 IOD definitions for CT, MR, US, DX, NM, PET
     /// </summary>
     public class DicomAnonymizer
     {
         private readonly ILogger<DicomAnonymizer> _logger;
 
+        // The keep-list (Config/dicom-allowlist.json) is loaded once at startup as a DI singleton
+        // and injected here. The same singleton backs the /api/anonymisation/policy endpoint, so
+        // the anonymiser and the UI describe exactly the same tags — no second hand-kept copy.
+        private readonly DicomAllowlist _allowlist;
+
         // ── UIDs that must NOT be copied verbatim — handled explicitly in AnonymizeFile ─────
-        // SOPInstanceUID (00080018) is intentionally absent: Radiopaedia's anonymiser removes
-        // it (no policy entry → default "remove") and their server rejects files where it is
-        // present in the dataset. It is computed only for file-meta / naming purposes.
+        // SOPInstanceUID (00080018) is intentionally absent from the allowlist: Radiopaedia's
+        // anonymiser removes it (no policy entry → default "remove") and their server rejects
+        // files where it is present in the dataset. It is computed only for file-meta / naming.
         private static readonly HashSet<DicomTag> _uidTagsToReplace = new()
         {
             DicomTag.SOPInstanceUID,      // (0008,0018) — computed but NOT written to dataset
             DicomTag.StudyInstanceUID,    // (0020,000D) consistent/study  → SHA-512 hash
             DicomTag.SeriesInstanceUID,   // (0020,000E) consistent/series → SHA-512 hash
             DicomTag.FrameOfReferenceUID, // (0020,0052) consistent/FoR   → SHA-512 hash
-        };
-
-        // ── Tags copied verbatim (non-PHI, safe for display and analysis) ───────────────────
-        //    Mirrors Radiopaedia's "keep" actions across all module policies.
-        //    Private tags (odd group numbers) are never on this list.
-        private static readonly HashSet<DicomTag> _allowedTags = new()
-        {
-            // ── SOP Common ─────────────────────────────────────────────────────────────────
-            DicomTag.SpecificCharacterSet,          // (0008,0005) CRITICAL — required when any string is present
-            DicomTag.SOPClassUID,                   // (0008,0016) image type — kept unchanged
-
-            // ── General Series / Study (non-PHI parts) ─────────────────────────────────────
-            DicomTag.Modality,                      // (0008,0060)
-            DicomTag.SeriesDescription,             // (0008,103E) Radiopaedia explicitly keeps
-            DicomTag.SeriesNumber,                  // (0020,0011)
-            DicomTag.AcquisitionNumber,             // (0020,0012)
-            DicomTag.InstanceNumber,                // (0020,0013) frame ordering
-
-            // ── Image Pixel — core decoding (required for any viewer) ──────────────────────
-            DicomTag.SamplesPerPixel,               // (0028,0002)
-            DicomTag.PhotometricInterpretation,     // (0028,0004)
-            DicomTag.PlanarConfiguration,           // (0028,0006) CRITICAL — required for RGB/colour images
-            DicomTag.Rows,                          // (0028,0010)
-            DicomTag.Columns,                       // (0028,0011)
-            DicomTag.PixelAspectRatio,              // (0028,0034)
-            DicomTag.BitsAllocated,                 // (0028,0100)
-            DicomTag.BitsStored,                    // (0028,0101)
-            DicomTag.HighBit,                       // (0028,0102)
-            DicomTag.PixelRepresentation,           // (0028,0103)
-            DicomTag.SmallestImagePixelValue,       // (0028,0106)
-            DicomTag.LargestImagePixelValue,        // (0028,0107)
-            DicomTag.PixelPaddingValue,             // (0028,0120)
-            DicomTag.PixelPaddingRangeLimit,        // (0028,0121)
-            DicomTag.QualityControlImage,           // (0028,0300)
-            DicomTag.BurnedInAnnotation,            // (0028,0301)
-            DicomTag.PixelData,                     // (7FE0,0010) the actual image bytes
-
-            // ── Image Plane / spatial geometry ─────────────────────────────────────────────
-            DicomTag.ImageOrientationPatient,       // (0020,0037)
-            DicomTag.ImagePositionPatient,          // (0020,0032)
-            DicomTag.PixelSpacing,                  // (0028,0030)
-            DicomTag.SliceThickness,                // (0018,0050)
-            DicomTag.SliceLocation,                 // (0020,1041)
-            DicomTag.SpacingBetweenSlices,          // (0018,0088)
-            DicomTag.ImagerPixelSpacing,            // (0018,1164)
-            DicomTag.PatientOrientation,            // (0020,0020)
-            DicomTag.Laterality,                    // (0020,0060) L/R — not patient-identifying
-            DicomTag.PatientPosition,               // (0018,5100) HFS/HFP/FFS etc. — orientation
-            DicomTag.PositionReferenceIndicator,    // (0020,1040)
-            DicomTag.ImagesInAcquisition,           // (0020,1002)
-
-            // ── Display / Windowing ────────────────────────────────────────────────────────
-            DicomTag.WindowCenter,                  // (0028,1050)
-            DicomTag.WindowWidth,                   // (0028,1051)
-            DicomTag.WindowCenterWidthExplanation,  // (0028,1055)
-            DicomTag.VOILUTFunction,                // (0028,1056)
-            DicomTag.RescaleIntercept,              // (0028,1052) CT HU conversion
-            DicomTag.RescaleSlope,                  // (0028,1053)
-            DicomTag.RescaleType,                   // (0028,1054)
-            DicomTag.PixelIntensityRelationship,    // (0028,1040)
-            DicomTag.PixelIntensityRelationshipSign,// (0028,1041)
-            DicomTag.PresentationLUTShape,          // (2050,0020)
-
-            // ── Palette / LUT (colour-mapped images) ──────────────────────────────────────
-            DicomTag.RedPaletteColorLookupTableDescriptor,           // (0028,1101)
-            DicomTag.GreenPaletteColorLookupTableDescriptor,         // (0028,1102)
-            DicomTag.BluePaletteColorLookupTableDescriptor,          // (0028,1103)
-            DicomTag.RedPaletteColorLookupTableData,                 // (0028,1201)
-            DicomTag.GreenPaletteColorLookupTableData,               // (0028,1202)
-            DicomTag.BluePaletteColorLookupTableData,                // (0028,1203)
-            DicomTag.SegmentedRedPaletteColorLookupTableData,        // (0028,1221)
-            DicomTag.SegmentedGreenPaletteColorLookupTableData,      // (0028,1222)
-            DicomTag.SegmentedBluePaletteColorLookupTableData,       // (0028,1223)
-
-            // ── Multi-frame ───────────────────────────────────────────────────────────────
-            DicomTag.NumberOfFrames,                // (0028,0008)
-            DicomTag.FrameIncrementPointer,         // (0028,0009)
-            DicomTag.FrameTime,                     // (0018,1063) cine
-            DicomTag.FrameTimeVector,               // (0018,1065) cine
-            DicomTag.RepresentativeFrameNumber,     // (0028,6010)
-
-            // ── Lossy compression ─────────────────────────────────────────────────────────
-            DicomTag.LossyImageCompression,         // (0028,2110)
-            DicomTag.LossyImageCompressionRatio,    // (0028,2112)
-            DicomTag.LossyImageCompressionMethod,   // (0028,2114)
-
-            // ── Patient — non-identifying fields kept by Radiopaedia ──────────────────────
-            DicomTag.PatientSex,                    // (0010,0040) kept by Radiopaedia
-
-            // ── Acquisition parameters — all non-PHI scanner settings ─────────────────────
-            //    Source: Radiopaedia broadlySafeFieldsPolicy + modality-specific module policies
-            DicomTag.ImageType,                     // (0008,0008)
-            DicomTag.BodyPartExamined,              // (0018,0015)
-            DicomTag.ContrastBolusAgent,            // (0018,0010)
-            DicomTag.ContrastBolusRoute,            // (0018,1048)
-            DicomTag.ScanOptions,                   // (0018,0022) CT
-            DicomTag.ScanningSequence,              // (0018,0020) MR
-            DicomTag.SequenceVariant,               // (0018,0021) MR
-            DicomTag.MRAcquisitionType,             // (0018,0023) MR
-            DicomTag.KVP,                           // (0018,0060) CT tube voltage
-            DicomTag.DataCollectionDiameter,        // (0018,0090)
-            DicomTag.RepetitionTime,                // (0018,0080) MR TR
-            DicomTag.EchoTime,                      // (0018,0081) MR TE
-            DicomTag.InversionTime,                 // (0018,0082) MR TI
-            DicomTag.NumberOfAverages,              // (0018,0083) MR
-            DicomTag.ImagingFrequency,              // (0018,0084) MR
-            DicomTag.ImagedNucleus,                 // (0018,0085) MR
-            DicomTag.EchoNumbers,                   // (0018,0086) MR
-            DicomTag.MagneticFieldStrength,         // (0018,0087) MR
-            DicomTag.NumberOfPhaseEncodingSteps,    // (0018,0089)
-            DicomTag.EchoTrainLength,               // (0018,0091) MR
-            DicomTag.PercentSampling,               // (0018,0093)
-            DicomTag.PercentPhaseFieldOfView,       // (0018,0094)
-            DicomTag.PixelBandwidth,                // (0018,0095)
-            DicomTag.SpatialResolution,             // (0018,1050)
-            DicomTag.HeartRate,                     // (0018,1088)
-            DicomTag.CardiacNumberOfImages,         // (0018,1090)
-            DicomTag.TriggerWindow,                 // (0018,1094)
-            DicomTag.ReconstructionDiameter,        // (0018,1100)
-            DicomTag.DistanceSourceToDetector,      // (0018,1110)
-            DicomTag.DistanceSourceToPatient,       // (0018,1111)
-            DicomTag.EstimatedRadiographicMagnificationFactor, // (0018,1114)
-            DicomTag.GantryDetectorTilt,            // (0018,1120)
-            DicomTag.TableHeight,                   // (0018,1130)
-            DicomTag.RotationDirection,             // (0018,1140)
-            DicomTag.ExposureTime,                  // (0018,1150)
-            DicomTag.XRayTubeCurrent,               // (0018,1151)
-            DicomTag.Exposure,                      // (0018,1152)
-            DicomTag.AveragePulseWidth,             // (0018,1154)
-            DicomTag.FilterType,                    // (0018,1160)
-            DicomTag.FocalSpots,                    // (0018,1190)
-            DicomTag.FlipAngle,                     // (0018,1314) MR
-            DicomTag.VariableFlipAngleFlag,         // (0018,1315) MR
-            DicomTag.SAR,                           // (0018,1316) MR specific absorption rate
-            DicomTag.ConvolutionKernel,             // (0018,1210) CT
-            // CT-specific dose / protocol
-            DicomTag.SingleCollimationWidth,        // (0018,9306)
-            DicomTag.TotalCollimationWidth,         // (0018,9307)
-            DicomTag.TableSpeed,                    // (0018,9309)
-            DicomTag.TableFeedPerRotation,          // (0018,9310)
-            DicomTag.SpiralPitchFactor,             // (0018,9311)
-            DicomTag.ExposureModulationType,        // (0018,9323)
-            DicomTag.CTDIvol,                       // (0018,9345)
-            // Cardiac / respiratory gating
-            DicomTag.CardiacSynchronizationTechnique, // (0018,9037)
-            DicomTag.CardiacSignalSource,           // (0018,9085)
-            // Radiation dose metrics (no PHI)
-            new DicomTag(0x0040, 0x0301),           // (0040,0301) Total Number of Exposures
-            DicomTag.HalfValueLayer,                // (0040,0314)
-            DicomTag.OrganDose,                     // (0040,0316)
-            // Mammography
-            DicomTag.BreastImplantPresent,          // (0028,1300)
         };
 
         // ── Tags replaced with empty values ─────────────────────────────────────────────────
@@ -210,10 +58,18 @@ namespace RadiopaediaConnect.Services.Dicom
             DicomTag.Manufacturer,            // (0008,0070) LO type-2
         };
 
-        public DicomAnonymizer(ILogger<DicomAnonymizer> logger)
+        /// <summary>The type-2 PHI tags written as empty strings. Exposed so the UI policy endpoint
+        /// can describe them from the same source the anonymiser uses.</summary>
+        public static IReadOnlyList<DicomTag> EmptyReplaceTags => _emptyReplaceTags;
+
+        public DicomAnonymizer(ILogger<DicomAnonymizer> logger, DicomAllowlist allowlist)
         {
             _logger = logger;
+            _allowlist = allowlist;
         }
+
+        /// <summary>The set of tags copied verbatim, from the startup-loaded allowlist singleton.</summary>
+        private IReadOnlySet<DicomTag> KeepTags => _allowlist.KeepTags;
 
         // ── Public API ────────────────────────────────────────────────────────────────────────
 
@@ -227,8 +83,11 @@ namespace RadiopaediaConnect.Services.Dicom
         {
             Directory.CreateDirectory(outputDir);
 
+            var keepTags = KeepTags;   // loaded at startup; see DicomAllowlist (fail-closed)
+
             var dcmFiles = Directory.GetFiles(inputDir, "*.dcm");
-            _logger.LogInformation("[Anon] Anonymising {Count} DICOM file(s) in {Dir}", dcmFiles.Length, inputDir);
+            _logger.LogInformation("[Anon] Anonymising {Count} DICOM file(s) in {Dir} using {Tags} keep-tag(s)",
+                dcmFiles.Length, inputDir, keepTags.Count);
 
             // Anonymise every file, capturing InstanceNumber so we can order them.
             var staged = new List<(string TempPath, int InstanceNumber)>();
@@ -288,9 +147,10 @@ namespace RadiopaediaConnect.Services.Dicom
         {
             var src = source.Dataset;
             var anon = new DicomDataset();
+            var keepTags = KeepTags;
 
             // ── Step 1: Copy all allowlisted tags, skipping UIDs (handled below) ──────────
-            foreach (var tag in _allowedTags)
+            foreach (var tag in keepTags)
             {
                 if (_uidTagsToReplace.Contains(tag)) continue;
                 if (!src.Contains(tag)) continue;

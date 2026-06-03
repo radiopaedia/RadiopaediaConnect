@@ -2,163 +2,46 @@ import { useState, useEffect, Fragment } from 'react';
 import { Transition } from '@headlessui/react';
 
 // ── Data ─────────────────────────────────────────────────────────────────────
-// Mirrors the allowlist in Services/Dicom/DicomAnonymizer.cs exactly.
-// Keep these two files in sync when the tag list changes.
+// The retained ("keep") and zeroed tag lists are NOT hard-coded here — they are
+// fetched at runtime from GET /api/anonymisation/policy, which is backed by the
+// same Config/dicom-allowlist.json the anonymiser uses. This guarantees the UI and
+// the pipeline can never disagree about which tags are kept.
 //
-// Policy source: github.com/radiopaedia/dicom-anonymiser (AGPL-3.0)
+// Policy source: github.com/radiopaedia/dicom-anonymiser
 // Our strategy is aligned with Radiopaedia's open-source anonymiser so that
 // files produced here are compatible with their server-side re-anonymiser and viewer.
 
-const TAG_GROUPS = [
-    {
-        label: 'Pixel data',
-        description: 'The raw image bytes and every structural tag required to decode them correctly, including planar configuration for colour images.',
-        tags: [
-            { tag: '(0008,0016)', name: 'SOP Class UID',              note: 'Image type: CT, MR, US, etc. Unchanged.' },
-            { tag: '(0028,0002)', name: 'Samples Per Pixel' },
-            { tag: '(0028,0004)', name: 'Photometric Interpretation' },
-            { tag: '(0028,0006)', name: 'Planar Configuration',        note: 'Required for RGB / colour images' },
-            { tag: '(0028,0010)', name: 'Rows' },
-            { tag: '(0028,0011)', name: 'Columns' },
-            { tag: '(0028,0034)', name: 'Pixel Aspect Ratio' },
-            { tag: '(0028,0100)', name: 'Bits Allocated' },
-            { tag: '(0028,0101)', name: 'Bits Stored' },
-            { tag: '(0028,0102)', name: 'High Bit' },
-            { tag: '(0028,0103)', name: 'Pixel Representation' },
-            { tag: '(0028,0106)', name: 'Smallest Image Pixel Value' },
-            { tag: '(0028,0107)', name: 'Largest Image Pixel Value' },
-            { tag: '(0028,0120)', name: 'Pixel Padding Value' },
-            { tag: '(0028,0121)', name: 'Pixel Padding Range Limit' },
-            { tag: '(0028,0300)', name: 'Quality Control Image' },
-            { tag: '(0028,0301)', name: 'Burned In Annotation',        note: 'Flag only; pixel PHI still requires PNG fallback' },
-            { tag: '(0028,0008)', name: 'Number of Frames',            note: 'Multi-frame' },
-            { tag: '(0028,0009)', name: 'Frame Increment Pointer',     note: 'Multi-frame' },
-            { tag: '(7FE0,0010)', name: 'Pixel Data',                  note: 'The actual image bytes' },
-        ],
-    },
-    {
-        label: 'Display & windowing',
-        description: 'Windowing, LUT, and lossy-compression values needed to render the image correctly in a DICOM viewer.',
-        tags: [
-            { tag: '(0028,1050)', name: 'Window Center' },
-            { tag: '(0028,1051)', name: 'Window Width' },
-            { tag: '(0028,1055)', name: 'Window Center Width Explanation' },
-            { tag: '(0028,1056)', name: 'VOI LUT Function' },
-            { tag: '(0028,1052)', name: 'Rescale Intercept',           note: 'CT HU conversion' },
-            { tag: '(0028,1053)', name: 'Rescale Slope' },
-            { tag: '(0028,1054)', name: 'Rescale Type' },
-            { tag: '(0028,1040)', name: 'Pixel Intensity Relationship' },
-            { tag: '(0028,1041)', name: 'Pixel Intensity Relationship Sign' },
-            { tag: '(2050,0020)', name: 'Presentation LUT Shape' },
-            { tag: '(0028,2110)', name: 'Lossy Image Compression' },
-            { tag: '(0028,2112)', name: 'Lossy Image Compression Ratio' },
-            { tag: '(0028,2114)', name: 'Lossy Image Compression Method' },
-            { tag: '(0028,1101–03)', name: 'Palette LUT Descriptors',  note: 'Colour-mapped images' },
-            { tag: '(0028,1201–03)', name: 'Palette LUT Data',         note: 'Colour-mapped images' },
-            { tag: '(0028,1221–23)', name: 'Segmented Palette LUT Data', note: 'Colour-mapped images' },
-            { tag: '(0028,1300)', name: 'Breast Implant Present' },
-        ],
-    },
-    {
-        label: 'Spatial geometry',
-        description: 'Orientation, spacing, and frame-of-reference metadata that allows viewers to display slices in the correct anatomical position and reconstruct multi-planar views.',
-        tags: [
-            { tag: '(0020,0052)', name: 'Frame of Reference UID',      note: 'SHA-512 hashed, consistent within a series; required for CT/MR IOD' },
-            { tag: '(0020,0037)', name: 'Image Orientation (Patient)' },
-            { tag: '(0020,0032)', name: 'Image Position (Patient)' },
-            { tag: '(0028,0030)', name: 'Pixel Spacing' },
-            { tag: '(0018,0050)', name: 'Slice Thickness' },
-            { tag: '(0020,1041)', name: 'Slice Location' },
-            { tag: '(0018,0088)', name: 'Spacing Between Slices' },
-            { tag: '(0018,1164)', name: 'Imager Pixel Spacing' },
-            { tag: '(0020,0013)', name: 'Instance Number',             note: 'Frame ordering' },
-            { tag: '(0020,0012)', name: 'Acquisition Number' },
-            { tag: '(0020,0011)', name: 'Series Number' },
-            { tag: '(0020,0060)', name: 'Laterality',                  note: 'Left / Right, not patient-identifying' },
-            { tag: '(0020,0020)', name: 'Patient Orientation' },
-            { tag: '(0018,5100)', name: 'Patient Position',            note: 'e.g. HFS, HFP - scanner table orientation' },
-            { tag: '(0020,1040)', name: 'Position Reference Indicator' },
-            { tag: '(0020,1002)', name: 'Images in Acquisition' },
-        ],
-    },
-    {
-        label: 'Acquisition parameters',
-        description: 'Technical scanner settings that provide clinical context without identifying the patient. Covers CT, MR, US, DX, and fluoroscopy parameters.',
-        tags: [
-            { tag: '(0008,0060)', name: 'Modality' },
-            { tag: '(0008,0008)', name: 'Image Type' },
-            { tag: '(0008,103E)', name: 'Series Description' },
-            { tag: '(0018,0015)', name: 'Body Part Examined',          note: 'e.g. CHEST, HEAD' },
-            { tag: '(0018,0010)', name: 'Contrast/Bolus Agent' },
-            { tag: '(0018,1048)', name: 'Contrast/Bolus Route' },
-            { tag: '(0018,0022)', name: 'Scan Options',                note: 'CT' },
-            { tag: '(0018,0020)', name: 'Scanning Sequence',           note: 'MR' },
-            { tag: '(0018,0021)', name: 'Sequence Variant',            note: 'MR' },
-            { tag: '(0018,0023)', name: 'MR Acquisition Type' },
-            { tag: '(0018,0060)', name: 'KVP',                         note: 'CT tube voltage' },
-            { tag: '(0018,0080)', name: 'Repetition Time (TR)',         note: 'MR' },
-            { tag: '(0018,0081)', name: 'Echo Time (TE)',               note: 'MR' },
-            { tag: '(0018,0082)', name: 'Inversion Time (TI)',          note: 'MR' },
-            { tag: '(0018,0083)', name: 'Number of Averages',           note: 'MR' },
-            { tag: '(0018,0084)', name: 'Imaging Frequency',            note: 'MR' },
-            { tag: '(0018,0085)', name: 'Imaged Nucleus',               note: 'MR' },
-            { tag: '(0018,0086)', name: 'Echo Number(s)',               note: 'MR' },
-            { tag: '(0018,0087)', name: 'Magnetic Field Strength',      note: 'MR' },
-            { tag: '(0018,0089)', name: 'Number of Phase Encoding Steps' },
-            { tag: '(0018,0090)', name: 'Data Collection Diameter' },
-            { tag: '(0018,0091)', name: 'Echo Train Length',            note: 'MR' },
-            { tag: '(0018,0093)', name: 'Percent Sampling' },
-            { tag: '(0018,0094)', name: 'Percent Phase Field of View' },
-            { tag: '(0018,0095)', name: 'Pixel Bandwidth' },
-            { tag: '(0018,1050)', name: 'Spatial Resolution' },
-            { tag: '(0018,1063)', name: 'Frame Time',                   note: 'Cine' },
-            { tag: '(0018,1065)', name: 'Frame Time Vector',            note: 'Cine' },
-            { tag: '(0028,6010)', name: 'Representative Frame Number' },
-            { tag: '(0018,1088)', name: 'Heart Rate' },
-            { tag: '(0018,1090)', name: 'Cardiac Number of Images' },
-            { tag: '(0018,1094)', name: 'Trigger Window' },
-            { tag: '(0018,1100)', name: 'Reconstruction Diameter',      note: 'CT' },
-            { tag: '(0018,1110)', name: 'Distance Source to Detector' },
-            { tag: '(0018,1111)', name: 'Distance Source to Patient' },
-            { tag: '(0018,1114)', name: 'Est. Radiographic Magnification' },
-            { tag: '(0018,1120)', name: 'Gantry/Detector Tilt',         note: 'CT' },
-            { tag: '(0018,1130)', name: 'Table Height' },
-            { tag: '(0018,1140)', name: 'Rotation Direction' },
-            { tag: '(0018,1150)', name: 'Exposure Time' },
-            { tag: '(0018,1151)', name: 'X-Ray Tube Current' },
-            { tag: '(0018,1152)', name: 'Exposure' },
-            { tag: '(0018,1160)', name: 'Filter Type' },
-            { tag: '(0018,1190)', name: 'Focal Spot(s)' },
-            { tag: '(0018,1210)', name: 'Convolution Kernel',           note: 'CT reconstruction' },
-            { tag: '(0018,1314)', name: 'Flip Angle',                   note: 'MR' },
-            { tag: '(0018,1315)', name: 'Variable Flip Angle Flag',     note: 'MR' },
-            { tag: '(0018,1316)', name: 'SAR',                          note: 'MR specific absorption rate' },
-            { tag: '(0018,9037)', name: 'Cardiac Synchronization Technique' },
-            { tag: '(0018,9085)', name: 'Cardiac Signal Source' },
-            { tag: '(0018,9306)', name: 'Single Collimation Width',     note: 'CT' },
-            { tag: '(0018,9307)', name: 'Total Collimation Width',      note: 'CT' },
-            { tag: '(0018,9309)', name: 'Table Speed',                  note: 'CT' },
-            { tag: '(0018,9310)', name: 'Table Feed per Rotation',      note: 'CT' },
-            { tag: '(0018,9311)', name: 'Spiral Pitch Factor',          note: 'CT' },
-            { tag: '(0018,9323)', name: 'Exposure Modulation Type',     note: 'CT' },
-            { tag: '(0018,9345)', name: 'CTDIvol',                      note: 'CT dose index' },
-            { tag: '(0040,0314)', name: 'Half Value Layer' },
-            { tag: '(0040,0316)', name: 'Organ Dose' },
-        ],
-    },
-];
+// Friendly headings for the DICOM group component (first 4 hex digits of the tag).
+// Derived from the tag itself, so it never drifts from the allowlist contents.
+const GROUP_LABELS = {
+    '0008': { label: 'SOP & general', description: 'SOP class, modality, series description and other general identifiers needed to interpret the object.' },
+    '0010': { label: 'Patient (non-identifying)', description: 'Patient attributes Radiopaedia deems non-identifying (e.g. sex).' },
+    '0018': { label: 'Acquisition parameters', description: 'Technical scanner settings that provide clinical context without identifying the patient (CT, MR, US, DX, fluoroscopy).' },
+    '0020': { label: 'Spatial geometry', description: 'Orientation, position and ordering metadata so viewers can show slices in the correct anatomical sequence.' },
+    '0028': { label: 'Image pixel & display', description: 'Pixel structure, windowing, LUTs and compression values required to decode and render the image.' },
+    '0040': { label: 'Dose & exposure', description: 'Radiation dose and exposure measurements (no PHI).' },
+    '0054': { label: 'Nuclear medicine / PET', description: 'Energy windows, detectors, gating and decay metadata for NM/PET series.' },
+    '2050': { label: 'Presentation LUT', description: 'Presentation LUT shape used for correct greyscale display.' },
+    '5600': { label: 'Spectroscopy', description: 'MR spectroscopy data and phase-correction values.' },
+    '7FE0': { label: 'Pixel data', description: 'The raw image bytes.' },
+};
 
-const ZEROED_TAGS = [
-    { tag: '(0010,0010)', name: 'Patient Name',              note: 'Present but empty' },
-    { tag: '(0010,0020)', name: 'Patient ID',                note: 'Present but empty' },
-    { tag: '(0010,0030)', name: 'Patient Birth Date',        note: 'Present but empty' },
-    { tag: '(0008,0020)', name: 'Study Date',                note: 'Present but empty' },
-    { tag: '(0008,0030)', name: 'Study Time',                note: 'Present but empty' },
-    { tag: '(0008,0050)', name: 'Accession Number',          note: 'Present but empty' },
-    { tag: '(0008,0090)', name: 'Referring Physician Name',  note: 'Present but empty' },
-    { tag: '(0020,0010)', name: 'Study ID',                  note: 'Present but empty' },
-    { tag: '(0008,0070)', name: 'Manufacturer',              note: 'Present but empty' },
-];
+const groupOf = (tag) => (tag || '').replace(/[()]/g, '').slice(0, 4).toUpperCase();
+
+// Build the grouped structure the UI renders from a flat list of {tag, name, group}.
+const buildGroups = (keep) => {
+    const byGroup = new Map();
+    for (const t of keep) {
+        const g = (t.group || groupOf(t.tag)).toUpperCase();
+        if (!byGroup.has(g)) byGroup.set(g, []);
+        byGroup.get(g).push({ tag: t.tag, name: t.description || t.alias || t.tag });
+    }
+    return [...byGroup.keys()].sort().map((g) => ({
+        label: GROUP_LABELS[g]?.label ?? `Group ${g}`,
+        description: GROUP_LABELS[g]?.description ?? '',
+        tags: byGroup.get(g),
+    }));
+};
 
 const REMOVED_CATEGORIES = [
     { label: 'Patient demographics (full)',        examples: 'Age (beyond year-level), weight, address, ethnicity, medical record numbers' },
@@ -175,7 +58,31 @@ const REMOVED_CATEGORIES = [
 // ── Shared content ────────────────────────────────────────────────────────────
 
 export const AnonymisationContent = () => {
-    const [openGroups, setOpenGroups] = useState(() => TAG_GROUPS.map((_, i) => i));
+    const [tagGroups, setTagGroups] = useState([]);
+    const [zeroedTags, setZeroedTags] = useState([]);
+    const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
+    const [openGroups, setOpenGroups] = useState([]);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch('/api/anonymisation/policy');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                if (cancelled) return;
+                const groups = buildGroups(data.keep ?? []);
+                setTagGroups(groups);
+                setZeroedTags((data.zeroed ?? []).map(z => ({ ...z, note: 'Present but empty' })));
+                setOpenGroups(groups.map((_, i) => i));
+                setStatus('ready');
+            } catch {
+                if (!cancelled) setStatus('error');
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
     const toggle = (i) =>
         setOpenGroups(prev => prev.includes(i) ? prev.filter(x => x !== i) : [...prev, i]);
 
@@ -216,9 +123,24 @@ export const AnonymisationContent = () => {
             <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-2">
                     Tags retained (verbatim copy)
+                    {status === 'ready' && (
+                        <span className="ml-2 normal-case font-normal text-slate-400 dark:text-slate-500">
+                            {tagGroups.reduce((n, g) => n + g.tags.length, 0)} tags
+                        </span>
+                    )}
                 </h3>
+
+                {status === 'loading' && (
+                    <p className="text-xs text-slate-400 dark:text-slate-500 italic">Loading anonymisation policy…</p>
+                )}
+                {status === 'error' && (
+                    <p className="text-xs text-red-600 dark:text-red-400">
+                        Could not load the anonymisation policy from the server.
+                    </p>
+                )}
+
                 <div className="space-y-1.5">
-                    {TAG_GROUPS.map((group, i) => (
+                    {tagGroups.map((group, i) => (
                         <div key={group.label}
                             className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
                             <button
@@ -249,7 +171,6 @@ export const AnonymisationContent = () => {
                                             <tr className="text-left text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
                                                 <th className="pb-1.5 font-medium w-28">Tag</th>
                                                 <th className="pb-1.5 font-medium">Name</th>
-                                                <th className="pb-1.5 font-medium text-right">Note</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -260,9 +181,6 @@ export const AnonymisationContent = () => {
                                                     </td>
                                                     <td className="py-1 text-slate-700 dark:text-slate-300">
                                                         {t.name}
-                                                    </td>
-                                                    <td className="py-1 text-right text-slate-400 dark:text-slate-500 italic pl-3">
-                                                        {t.note ?? ''}
                                                     </td>
                                                 </tr>
                                             ))}
@@ -286,7 +204,7 @@ export const AnonymisationContent = () => {
                     &ldquo;replace&rdquo; action used by Radiopaedia&apos;s anonymiser.
                 </p>
                 <div className="rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
-                    {ZEROED_TAGS.map(t => (
+                    {zeroedTags.map(t => (
                         <div key={t.tag} className="px-3.5 py-2 flex gap-3 items-baseline bg-white dark:bg-slate-900/20">
                             <span className="font-mono text-[11px] text-slate-400 dark:text-slate-500 w-28 flex-shrink-0">{t.tag}</span>
                             <span className="text-xs text-slate-700 dark:text-slate-300 flex-1">{t.name}</span>
@@ -328,12 +246,15 @@ export const AnonymisationContent = () => {
 
             {/* Source reference */}
             <p className="text-xs text-slate-400 dark:text-slate-500">
-                Implemented in{' '}
+                Tag lists above are served live from{' '}
                 <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded">
-                    Services/Dicom/DicomAnonymizer.cs
+                    Config/dicom-allowlist.json
                 </code>
-                . Keep this list in sync with that file when the allowlist changes.
-                Policy reference:{' '}
+                {' '}via{' '}
+                <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded">
+                    /api/anonymisation/policy
+                </code>
+                , the same source the anonymiser uses. Policy reference:{' '}
                 <a href="https://github.com/radiopaedia/dicom-anonymiser" target="_blank" rel="noreferrer"
                     className="underline text-indigo-600 dark:text-indigo-400">
                     github.com/radiopaedia/dicom-anonymiser

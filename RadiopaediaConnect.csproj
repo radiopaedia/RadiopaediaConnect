@@ -13,6 +13,12 @@
     <None Remove="rconnect.tar" />
   </ItemGroup>
 
+  <!-- DICOM anonymiser keep-list: bundled next to the assembly and into the Docker image
+       (publish → /app/Config/dicom-allowlist.json). Read at runtime by DicomAllowlist. -->
+  <ItemGroup>
+    <Content Update="Config\dicom-allowlist.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="ClientApp\node_modules\%40alloc\quick-lru\package.json" />
     <Content Include="ClientApp\node_modules\%40atlaskit\pragmatic-drag-and-drop-auto-scroll\constellation\index\images\distance-dampening.jpg" />
