@@ -54,10 +54,79 @@ const DIAGNOSTIC_CERTAINTY_MAP = {
     1: "Possible", 2: "Probable", 3: "Almost Certain", 4: "Certain", 5: "Not applicable"
 };
 
+const getFileIcon = (url) => {
+    if (url.endsWith('.dcm')) return '🩻';
+    if (url.match(/\.(jpg|jpeg|png|gif)$/i)) return '🖼️';
+    if (url.match(/\.(mp4|webm|mov)$/i)) return '🎬';
+    return '📄';
+};
+
+const getFileName = (url) => url.split('/').pop();
+
+const StudyOriginalsAccordion = ({ seriesEntries }) => {
+    const [open, setOpen] = useState(false);
+    const totalFiles = seriesEntries.reduce((sum, s) => sum + (s.files?.length || 0), 0);
+
+    return (
+        <div className="mt-3 border border-slate-200 dark:border-slate-600 rounded-lg overflow-hidden">
+            <button
+                onClick={() => setOpen(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-900/40 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors text-left"
+            >
+                <div className="flex items-center gap-2">
+                    <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
+                        Download Original Files
+                    </span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
+                        {totalFiles} file{totalFiles !== 1 ? 's' : ''}
+                    </span>
+                </div>
+                <svg
+                    className={`w-3.5 h-3.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+
+            {open && (
+                <div className="divide-y divide-slate-100 dark:divide-slate-700">
+                    {seriesEntries.map((seriesEntry) => (
+                        <div key={seriesEntry.series_id} className="px-3 py-2 bg-white dark:bg-slate-800">
+                            <div className="text-xs text-slate-400 dark:text-slate-500 mb-1">
+                                Series {seriesEntry.series_id}
+                            </div>
+                            <div className="space-y-0.5">
+                                {seriesEntry.files.map((fileUrl, idx) => (
+                                    <a
+                                        key={idx}
+                                        href={fileUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        download
+                                        className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 hover:underline py-0.5"
+                                    >
+                                        <span>{getFileIcon(fileUrl)}</span>
+                                        <span className="font-mono truncate">{getFileName(fileUrl)}</span>
+                                    </a>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
 const CaseDetailDrawer = ({ isOpen, onClose, caseId, adminMode = false, zIndex = 50 }) => {
     const [caseDetail, setCaseDetail] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [originals, setOriginals] = useState(null);
 
     // Lock body scroll when drawer is open
     useEffect(() => {
@@ -78,6 +147,7 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId, adminMode = false, zIndex =
             fetchCaseDetail();
         } else {
             setCaseDetail(null);
+            setOriginals(null);
             setError(null);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -94,10 +164,25 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId, adminMode = false, zIndex =
             }
             const data = await response.json();
             setCaseDetail(data);
+            if (data.radiopaediaCaseId) {
+                fetchOriginals();
+            }
         } catch (err) {
             setError(err.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchOriginals = async () => {
+        try {
+            const response = await fetch(`/api/cases/${caseId}/originals`);
+            if (response.ok) {
+                const data = await response.json();
+                setOriginals(data);
+            }
+        } catch {
+            // originals are best-effort, don't surface errors
         }
     };
 
@@ -310,94 +395,112 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId, adminMode = false, zIndex =
                                                 )}
 
                                                 <div className="space-y-4">
-                                                    {caseDetail.studies?.map((study, studyIndex) => (
-                                                        <div
-                                                            key={study.id || studyIndex}
-                                                            className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden"
-                                                        >
-                                                            {/* Study Header */}
-                                                            <div className="bg-slate-100 dark:bg-slate-900/50 px-4 py-2 border-b border-slate-200 dark:border-slate-700">
-                                                                <div className="flex items-center justify-between">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="px-2 py-0.5 text-xs font-bold rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300">
-                                                                            {study.modality || 'UNK'}
-                                                                        </span>
-                                                                        <span className="text-sm font-medium text-slate-900 dark:text-white">
-                                                                            Study {studyIndex + 1}
+                                                    {caseDetail.studies?.map((study, studyIndex) => {
+                                                        const studySeriesEntries = study.radiopaediaStudyId && originals
+                                                            ? (originals.original_file_urls_by_study?.[study.radiopaediaStudyId] ?? [])
+                                                            : [];
+
+                                                        return (
+                                                            <div
+                                                                key={study.id || studyIndex}
+                                                                className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden"
+                                                            >
+                                                                {/* Study Header */}
+                                                                <div className="bg-slate-100 dark:bg-slate-900/50 px-4 py-2 border-b border-slate-200 dark:border-slate-700">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span className="px-2 py-0.5 text-xs font-bold rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300">
+                                                                                {study.modality || 'UNK'}
+                                                                            </span>
+                                                                            <span className="text-sm font-medium text-slate-900 dark:text-white">
+                                                                                Study {studyIndex + 1}
+                                                                            </span>
+                                                                        </div>
+                                                                        <span className="text-xs text-slate-500 font-mono truncate max-w-[150px]" title={study.studyInstanceUid}>
+                                                                            {study.studyInstanceUid?.substring(0, 20)}...
                                                                         </span>
                                                                     </div>
-                                                                    <span className="text-xs text-slate-500 font-mono truncate max-w-[150px]" title={study.studyInstanceUid}>
-                                                                        {study.studyInstanceUid?.substring(0, 20)}...
-                                                                    </span>
                                                                 </div>
-                                                            </div>
 
-                                                            {/* Study Content */}
-                                                            <div className="p-4">
-                                                                {study.findings && (
-                                                                    <div className="mb-3">
-                                                                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Findings:</span>
-                                                                        <p className="text-sm text-slate-700 dark:text-slate-300 mt-1 whitespace-pre-wrap">
-                                                                            {study.findings}
-                                                                        </p>
-                                                                    </div>
-                                                                )}
+                                                                {/* Study Content */}
+                                                                <div className="p-4">
+                                                                    {study.findings && (
+                                                                        <div className="mb-3">
+                                                                            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Findings:</span>
+                                                                            <p className="text-sm text-slate-700 dark:text-slate-300 mt-1 whitespace-pre-wrap">
+                                                                                {study.findings}
+                                                                            </p>
+                                                                        </div>
+                                                                    )}
 
-                                                                {/* Series List */}
-                                                                <div>
-                                                                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">
-                                                                        Series ({study.series?.length || 0}):
-                                                                    </span>
+                                                                    {/* Series List */}
+                                                                    <div>
+                                                                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">
+                                                                            Series ({study.series?.length || 0}):
+                                                                        </span>
 
-                                                                    <div className="mt-2 space-y-2">
-                                                                        {study.series?.map((series, seriesIndex) => (
-                                                                            <div
-                                                                                key={series.id || seriesIndex}
-                                                                                className="bg-slate-50 dark:bg-slate-800 rounded p-3 text-sm"
-                                                                            >
-                                                                                <div className="flex items-start justify-between">
-                                                                                    <div className="flex-1 min-w-0">
-                                                                                        <div className="flex items-center gap-2">
-                                                                                            <span className="px-1.5 py-0.5 text-xs font-mono rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
-                                                                                                {series.modality || 'UNK'}
-                                                                                            </span>
-                                                                                            <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
-                                                                                                {series.seriesDescription || 'No Description'}
-                                                                                            </span>
-                                                                                        </div>
-                                                                                        <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 font-mono truncate" title={series.seriesInstanceUid}>
-                                                                                            UID: {series.seriesInstanceUid?.substring(0, 30)}...
+                                                                        <div className="mt-2 space-y-2">
+                                                                            {study.series?.map((series, seriesIndex) => (
+                                                                                <div
+                                                                                    key={series.id || seriesIndex}
+                                                                                    className="bg-slate-50 dark:bg-slate-800 rounded p-3 text-sm"
+                                                                                >
+                                                                                    <div className="flex items-start justify-between">
+                                                                                        <div className="flex-1 min-w-0">
+                                                                                            <div className="flex items-center gap-2">
+                                                                                                <span className="px-1.5 py-0.5 text-xs font-mono rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                                                                                                    {series.modality || 'UNK'}
+                                                                                                </span>
+                                                                                                <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
+                                                                                                    {series.seriesDescription || 'No Description'}
+                                                                                                </span>
+                                                                                            </div>
+                                                                                            <div className="mt-1 text-xs text-slate-500 dark:text-slate-400 font-mono truncate" title={series.seriesInstanceUid}>
+                                                                                                UID: {series.seriesInstanceUid?.substring(0, 30)}...
+                                                                                            </div>
                                                                                         </div>
                                                                                     </div>
-                                                                                </div>
 
-                                                                                <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                                                                                    <span className="px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
-                                                                                        Frames: {series.startFrame} - {series.endFrame}
-                                                                                    </span>
-                                                                                    {series.stepFrame > 1 && (
-                                                                                        <span className="px-2 py-1 rounded bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
-                                                                                            Step: {series.stepFrame}
+                                                                                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                                                                        <span className="px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+                                                                                            Frames: {series.startFrame} - {series.endFrame}
                                                                                         </span>
-                                                                                    )}
-                                                                                    <span className="px-2 py-1 rounded bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300">
-                                                                                        Selected: {series.selectedFrameCount} images
-                                                                                    </span>
-                                                                                    {series.redactionCount > 0 && (
-                                                                                        <span className="px-2 py-1 rounded bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300">
-                                                                                            {series.redactionCount} redaction{series.redactionCount !== 1 ? 's' : ''}
+                                                                                        {series.stepFrame > 1 && (
+                                                                                            <span className="px-2 py-1 rounded bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
+                                                                                                Step: {series.stepFrame}
+                                                                                            </span>
+                                                                                        )}
+                                                                                        <span className="px-2 py-1 rounded bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                                                                                            Selected: {series.selectedFrameCount} images
                                                                                         </span>
-                                                                                    )}
+                                                                                        {series.redactionCount > 0 && (
+                                                                                            <span className="px-2 py-1 rounded bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300">
+                                                                                                {series.redactionCount} redaction{series.redactionCount !== 1 ? 's' : ''}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
                                                                                 </div>
-                                                                            </div>
-                                                                        ))}
+                                                                            ))}
+                                                                        </div>
                                                                     </div>
+
+                                                                    {/* Inline download accordion — only shown when originals are available for this study */}
+                                                                    {studySeriesEntries.length > 0 && (
+                                                                        <StudyOriginalsAccordion seriesEntries={studySeriesEntries} />
+                                                                    )}
                                                                 </div>
                                                             </div>
-                                                        </div>
-                                                    ))}
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
+
+                                            {/* Fallback download section for cases without stored study IDs */}
+                                            {originals && caseDetail.studies?.length > 0 && !caseDetail.studies.some(s => s.radiopaediaStudyId) && (
+                                                <StudyOriginalsAccordion
+                                                    seriesEntries={Object.values(originals.original_file_urls_by_study || {}).flat()}
+                                                />
+                                            )}
                                         </div>
                                     )}
                                 </div>

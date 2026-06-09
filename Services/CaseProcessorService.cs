@@ -77,6 +77,7 @@ namespace RadiopaediaConnect.Services
 
                     string rStudyId = await _apiClient.CreateStudyAsync(rCaseId, studyPayload, username);
                     _logger.LogInformation("[PIPELINE] Study Created! Radiopaedia ID: {RStudyId}", rStudyId);
+                    await _repository.UpdateStudyRadiopaediaIdAsync(caseId, study.StudyInstanceUid, rStudyId);
 
                     foreach (var series in study.Series)
                     {

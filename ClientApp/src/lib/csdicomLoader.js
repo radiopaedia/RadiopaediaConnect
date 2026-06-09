@@ -238,41 +238,85 @@ async function loadImage(imageId) {
   const pixelRepresentation = dataSet.uint16('x00280103') || 0;
   const samplesPerPixel = dataSet.uint16('x00280002') || 1;
   const photometric = dataSet.string('x00280004') || 'MONOCHROME2';
-  const isColor = samplesPerPixel > 1 || photometric === 'RGB' || photometric === 'YBR_FULL';
+  const planarConfiguration = dataSet.uint16('x00280006') || 0;
 
-  let typedPixelData;
-  let renderRgba = null; // For browser-decoded lossy JPEG (RGBA data)
+  if (!rows || !cols) {
+    throw new Error(`Missing image dimensions (Rows=${rows}, Columns=${cols})`);
+  }
+  const px = rows * cols;
 
+  const isPalette = photometric === 'PALETTE COLOR';
+  const isSubsampled = photometric.indexOf('422') !== -1 || photometric.indexOf('420') !== -1;
+  const hasColorSamples = samplesPerPixel >= 3;
+
+  let typedPixelData; // final array returned by getPixelData()
+  let producedRgba = false; // true once typedPixelData holds 4-byte RGBA
+  let colorSamples = null; // interleaved/planar 3-byte (RGB or YBR_FULL) samples
+  let samplesArePlanar = false;
+  let grayscale = null; // grayscale or palette-index values
+
+  // ── 1. Obtain pixel samples according to the transfer syntax ──
   if (!isEncapsulated(transferSyntax)) {
-    // Uncompressed: read raw pixel bytes
+    if (transferSyntax === TS_DEFLATED_EXPLICIT_VR_LE) {
+      throw new Error('Deflated Explicit VR Little Endian pixel data is not supported');
+    }
     const rawFrame = extractUncompressedFrame(dataSet, frameIndex);
-    typedPixelData = createTypedArray(rawFrame, bitsAllocated, pixelRepresentation, isColor);
+    if (hasColorSamples) {
+      assertSupportedColor(samplesPerPixel, bitsAllocated, isSubsampled, photometric);
+      colorSamples = rawFrame;
+      samplesArePlanar = planarConfiguration === 1;
+    } else {
+      grayscale = createTypedArray(rawFrame, bitsAllocated, pixelRepresentation, false);
+      if (transferSyntax === TS_EXPLICIT_VR_BE && bitsAllocated > 8) {
+        grayscale = byteSwap16Copy(grayscale); // big-endian → host order
+      }
+    }
   } else if (isJpegLossless(transferSyntax)) {
-    // JPEG Lossless: decode with jpeg-lossless-decoder-js
-    if (!jpegFrames || frameIndex >= jpegFrames.length) {
-      throw new Error(`JPEG frame ${frameIndex} not found (have ${jpegFrames?.length || 0} frames)`);
+    const resultBuffer = await decodeJpegLosslessFrame(jpegFrames, frameIndex);
+    if (hasColorSamples) {
+      assertSupportedColor(samplesPerPixel, bitsAllocated, isSubsampled, photometric);
+      colorSamples = new Uint8Array(resultBuffer); // decoder output is interleaved
+      samplesArePlanar = false;
+    } else {
+      grayscale = createTypedArrayFromDecoded(resultBuffer, bitsAllocated, pixelRepresentation);
     }
-    const frameBytes = jpegFrames[frameIndex];
-    const DecoderClass = await getJpegLosslessDecoder();
-    const decoder = new DecoderClass();
-    const resultBuffer = decoder.decompress(frameBytes.buffer, frameBytes.byteOffset, frameBytes.byteLength);
-    typedPixelData = createTypedArrayFromDecoded(resultBuffer, bitsAllocated, pixelRepresentation);
   } else if (isJpegLossy(transferSyntax)) {
-    // Lossy JPEG: decode with browser's native decoder
     if (!jpegFrames || frameIndex >= jpegFrames.length) {
       throw new Error(`JPEG frame ${frameIndex} not found (have ${jpegFrames?.length || 0} frames)`);
     }
+    // The browser decoder applies any YBR→RGB transform and yields RGBA directly.
     const rgbaData = await decodeJpegWithBrowser(jpegFrames[frameIndex]);
-    renderRgba = rgbaData;
-    // Extract just the RGB channels for cornerstone (ignore alpha)
-    typedPixelData = new Uint8Array(rows * cols * 3);
-    for (let i = 0; i < rows * cols; i++) {
-      typedPixelData[i * 3] = rgbaData[i * 4];
-      typedPixelData[i * 3 + 1] = rgbaData[i * 4 + 1];
-      typedPixelData[i * 3 + 2] = rgbaData[i * 4 + 2];
-    }
+    typedPixelData = new Uint8Array(rgbaData.buffer, rgbaData.byteOffset, rgbaData.byteLength);
+    producedRgba = true;
   } else {
-    throw new Error(`Unsupported transfer syntax: ${transferSyntax}`);
+    throw new Error(
+      `Unsupported transfer syntax: ${transferSyntax}. JPEG-LS, JPEG 2000 and RLE ` +
+        `cannot be decoded in-browser — transcode server-side first.`,
+    );
+  }
+
+  // ── 2. Normalise to what cornerstone expects (RGBA for colour, raw for gray) ──
+  if (!producedRgba) {
+    if (hasColorSamples) {
+      // Legacy cornerstone renders colour via getPixelData() with a 4-byte RGBA
+      // stride (storedColorPixelDataToCanvasImageData / storedRGBA...). Convert the
+      // 3-byte samples (and YBR_FULL → RGB) here, honouring PlanarConfiguration.
+      // Without this, RGB result/reformat series (Siemens perfusion maps: RELCBV,
+      // RELMTT, TTP, overlays) render as garbled rainbow noise from the stride.
+      if (colorSamples.length < px * 3) {
+        throw new Error(`Truncated colour pixel data: ${colorSamples.length} bytes, need ${px * 3}`);
+      }
+      typedPixelData = colorSamplesToRgba(colorSamples, px, photometric, samplesArePlanar);
+      producedRgba = true;
+    } else if (isPalette) {
+      typedPixelData = paletteToRgba(dataSet, grayscale, px);
+      producedRgba = true;
+    } else {
+      if (!grayscale || grayscale.length < px) {
+        throw new Error(`Truncated grayscale pixel data: ${grayscale?.length || 0}, need ${px}`);
+      }
+      typedPixelData = grayscale;
+    }
   }
 
   // Read DICOM tags for display
@@ -299,7 +343,7 @@ async function loadImage(imageId) {
   let minPixelValue = 0;
   let maxPixelValue = 255;
 
-  if (!isColor && !renderRgba) {
+  if (!producedRgba) {
     minPixelValue = Infinity;
     maxPixelValue = -Infinity;
     for (let i = 0; i < typedPixelData.length; i++) {
@@ -315,7 +359,7 @@ async function loadImage(imageId) {
     windowWidth = maxPixelValue - minPixelValue || 1;
   }
 
-  const invert = photometric === 'MONOCHROME1';
+  const invert = !producedRgba && photometric === 'MONOCHROME1';
 
   // Build the legacy cornerstone image object
   const image = {
@@ -330,17 +374,144 @@ async function loadImage(imageId) {
     columns: cols,
     height: rows,
     width: cols,
-    color: isColor || !!renderRgba,
-    rgba: !!renderRgba,
+    color: producedRgba,
+    rgba: producedRgba,
     columnPixelSpacing,
     rowPixelSpacing,
     sizeInBytes: typedPixelData.byteLength,
     invert,
     getPixelData: () => typedPixelData,
-    render: renderRgba ? createRgbaRenderer(renderRgba, rows, cols) : undefined,
   };
 
   return image;
+}
+
+// ── Colour / decoding helpers ──
+
+/** Rejects colour formats we cannot faithfully render client-side. */
+function assertSupportedColor(samplesPerPixel, bitsAllocated, isSubsampled, photometric) {
+  if (samplesPerPixel !== 3 || bitsAllocated !== 8) {
+    throw new Error(
+      `Unsupported colour format: SamplesPerPixel=${samplesPerPixel}, ` +
+        `BitsAllocated=${bitsAllocated} (only 8-bit, 3-sample colour is supported)`,
+    );
+  }
+  if (isSubsampled) {
+    throw new Error(`Chroma-subsampled ${photometric} requires server-side decoding`);
+  }
+  if (photometric !== 'RGB' && photometric !== 'YBR_FULL') {
+    throw new Error(`Unsupported colour photometric interpretation: ${photometric}`);
+  }
+}
+
+async function decodeJpegLosslessFrame(jpegFrames, frameIndex) {
+  if (!jpegFrames || frameIndex >= jpegFrames.length) {
+    throw new Error(`JPEG frame ${frameIndex} not found (have ${jpegFrames?.length || 0} frames)`);
+  }
+  const frameBytes = jpegFrames[frameIndex];
+  const DecoderClass = await getJpegLosslessDecoder();
+  const decoder = new DecoderClass();
+  return decoder.decompress(frameBytes.buffer, frameBytes.byteOffset, frameBytes.byteLength);
+}
+
+function clamp8(v) {
+  return v < 0 ? 0 : v > 255 ? 255 : v | 0;
+}
+
+/** Byte-swaps 16-bit samples (big-endian → host) into a fresh array (no cache mutation). */
+function byteSwap16Copy(arr) {
+  const src = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+  const out = new Uint8Array(src.length);
+  for (let i = 0; i + 1 < src.length; i += 2) {
+    out[i] = src[i + 1];
+    out[i + 1] = src[i];
+  }
+  return arr instanceof Int16Array ? new Int16Array(out.buffer) : new Uint16Array(out.buffer);
+}
+
+/** Converts 3-byte colour samples (RGB or YBR_FULL, interleaved or planar) to 4-byte RGBA. */
+function colorSamplesToRgba(samples, px, photometric, isPlanar) {
+  const rgba = new Uint8Array(px * 4);
+  const ybr = photometric === 'YBR_FULL';
+  for (let i = 0; i < px; i++) {
+    let c0;
+    let c1;
+    let c2;
+    if (isPlanar) {
+      c0 = samples[i];
+      c1 = samples[px + i];
+      c2 = samples[2 * px + i];
+    } else {
+      c0 = samples[i * 3];
+      c1 = samples[i * 3 + 1];
+      c2 = samples[i * 3 + 2];
+    }
+    let r;
+    let g;
+    let b;
+    if (ybr) {
+      // YBR_FULL → RGB (DICOM PS3.3 C.7.6.3.1.2)
+      const cb = c1 - 128;
+      const cr = c2 - 128;
+      r = c0 + 1.402 * cr;
+      g = c0 - 0.344136 * cb - 0.714136 * cr;
+      b = c0 + 1.772 * cb;
+    } else {
+      r = c0;
+      g = c1;
+      b = c2;
+    }
+    rgba[i * 4] = clamp8(r);
+    rgba[i * 4 + 1] = clamp8(g);
+    rgba[i * 4 + 2] = clamp8(b);
+    rgba[i * 4 + 3] = 255;
+  }
+  return rgba;
+}
+
+/** Maps PALETTE COLOR index values through the per-channel LUTs to 4-byte RGBA. */
+function paletteToRgba(dataSet, indices, px) {
+  if (!indices) throw new Error('PALETTE COLOR image has no index data');
+  const red = readPaletteChannel(dataSet, 'x00281101', 'x00281201');
+  const green = readPaletteChannel(dataSet, 'x00281102', 'x00281202');
+  const blue = readPaletteChannel(dataSet, 'x00281103', 'x00281203');
+  if (!red || !green || !blue) {
+    throw new Error('PALETTE COLOR image is missing palette LUT data');
+  }
+  const rgba = new Uint8Array(px * 4);
+  for (let i = 0; i < px; i++) {
+    const v = indices[i];
+    rgba[i * 4] = paletteLookup(red, v);
+    rgba[i * 4 + 1] = paletteLookup(green, v);
+    rgba[i * 4 + 2] = paletteLookup(blue, v);
+    rgba[i * 4 + 3] = 255;
+  }
+  return rgba;
+}
+
+function readPaletteChannel(dataSet, descTag, dataTag) {
+  const el = dataSet.elements[dataTag];
+  if (!el) return null;
+  let numEntries = dataSet.uint16(descTag, 0);
+  if (numEntries === 0) numEntries = 65536; // per DICOM, 0 means 2^16
+  const firstMapped = dataSet.uint16(descTag, 1) || 0;
+  const bitsPerEntry = dataSet.uint16(descTag, 2) || 16;
+  const dv = new DataView(dataSet.byteArray.buffer, dataSet.byteArray.byteOffset + el.dataOffset, el.length);
+  const lut = new Uint8Array(numEntries);
+  if (bitsPerEntry === 8) {
+    for (let i = 0; i < numEntries && i < el.length; i++) lut[i] = dv.getUint8(i);
+  } else {
+    const count = Math.min(numEntries, Math.floor(el.length / 2));
+    for (let i = 0; i < count; i++) lut[i] = dv.getUint16(i * 2, true) >> 8; // 16-bit → high byte
+  }
+  return { firstMapped, numEntries, lut };
+}
+
+function paletteLookup(channel, value) {
+  let idx = value - channel.firstMapped;
+  if (idx < 0) idx = 0;
+  else if (idx >= channel.numEntries) idx = channel.numEntries - 1;
+  return channel.lut[idx];
 }
 
 // ── TypedArray helpers ──
@@ -363,21 +534,4 @@ function createTypedArrayFromDecoded(resultBuffer, bitsAllocated, pixelRepresent
     return new Int16Array(resultBuffer, 0, resultBuffer.byteLength / 2);
   }
   return new Uint16Array(resultBuffer, 0, resultBuffer.byteLength / 2);
-}
-
-// ── RGBA renderer for browser-decoded JPEG ──
-
-/**
- * Creates a custom render function for images decoded via the browser's JPEG decoder.
- * The browser gives us RGBA data which we render directly to canvas.
- */
-function createRgbaRenderer(rgbaData, rows, cols) {
-  return function (enabledElement, invalidated) {
-    if (invalidated) {
-      const canvas = enabledElement.canvas;
-      const ctx = canvas.getContext('2d');
-      const imageData = new ImageData(new Uint8ClampedArray(rgbaData.buffer), cols, rows);
-      ctx.putImageData(imageData, 0, 0);
-    }
-  };
 }

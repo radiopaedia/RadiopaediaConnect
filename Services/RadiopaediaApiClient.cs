@@ -355,6 +355,25 @@ namespace RadiopaediaConnect.Services
             }
         }
 
+        public async Task<JsonElement?> GetCaseOriginalsAsync(string radiopaediaCaseId, string username)
+        {
+            var token = await _authService.GetValidAccessTokenAsync(username);
+            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var response = await _httpClient.GetAsync($"cases/{radiopaediaCaseId}/originals");
+            var body = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError("[API] GetCaseOriginals failed for case {CaseId}: {Status} {Body}",
+                    radiopaediaCaseId, (int)response.StatusCode, body);
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.Clone();
+        }
+
         public async Task<UserQuotaDto?> GetUserQuotaAsync(string username)
         {
             var token = await _authService.GetValidAccessTokenAsync(username);

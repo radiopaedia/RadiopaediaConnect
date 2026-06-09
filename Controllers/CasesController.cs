@@ -16,14 +16,16 @@ namespace RadiopaediaConnect.Controllers
         private readonly ILogger<CasesController> _logger;
         private readonly CaseProcessorService _caseProcessor;
         private readonly AdminSessionService _sessionService;
+        private readonly RadiopaediaApiClient _radiopaediaApiClient;
 
-        public CasesController(DicomRepository repository, AppLogsRepository logsRepository, ILogger<CasesController> logger, CaseProcessorService caseProcessor, AdminSessionService sessionService)
+        public CasesController(DicomRepository repository, AppLogsRepository logsRepository, ILogger<CasesController> logger, CaseProcessorService caseProcessor, AdminSessionService sessionService, RadiopaediaApiClient radiopaediaApiClient)
         {
             _repository = repository;
             _logsRepository = logsRepository;
             _logger = logger;
             _caseProcessor = caseProcessor;
             _sessionService = sessionService;
+            _radiopaediaApiClient = radiopaediaApiClient;
         }
 
         /// <summary>
@@ -189,6 +191,35 @@ namespace RadiopaediaConnect.Controllers
                 pageSize,
                 totalPages = (int)Math.Ceiling(total / (double)pageSize),
             });
+        }
+
+        [HttpGet("{caseId:guid}/originals")]
+        public async Task<IActionResult> GetCaseOriginals(Guid caseId)
+        {
+            var username = User.FindFirst("urn:radiopaedia:username")?.Value;
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized("User session invalid. Please log in again.");
+
+            var caseDetail = await _repository.GetCaseDetailAsync(caseId, username);
+            if (caseDetail == null)
+                return NotFound("Case not found.");
+
+            if (string.IsNullOrEmpty(caseDetail.RadiopaediaCaseId))
+                return NotFound("Case has not been published to Radiopaedia yet.");
+
+            try
+            {
+                var originals = await _radiopaediaApiClient.GetCaseOriginalsAsync(caseDetail.RadiopaediaCaseId, username);
+                if (originals == null)
+                    return StatusCode(502, "Failed to retrieve originals from Radiopaedia.");
+
+                return Ok(originals);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve originals for case {CaseId}", caseId);
+                return StatusCode(500, "Failed to retrieve case originals.");
+            }
         }
 
         [HttpPost("submit")]

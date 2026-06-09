@@ -165,6 +165,7 @@ namespace RadiopaediaConnect.Models
         public string? RemoteNodeName { get; set; }
         public string? Modality { get; set; }
         public string? Findings { get; set; }
+        public string? RadiopaediaStudyId { get; set; }
         public List<CaseDetailSeriesDto> Series { get; set; } = new();
     }
 

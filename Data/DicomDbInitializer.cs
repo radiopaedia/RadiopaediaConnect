@@ -105,6 +105,9 @@ namespace RadiopaediaConnect.Data
             // Upload method per series: "dicom" (native DICOM via S3) or "png" (rendered ZIP)
             EnsureColumnExists(conn, "DraftCaseSeries", "UploadMethod", "TEXT NOT NULL DEFAULT 'dicom'");
 
+            // Radiopaedia study ID assigned after upload, used to cross-reference originals API
+            EnsureColumnExists(conn, "DraftCaseStudies", "RadiopaediaStudyId", "TEXT");
+
             var createAppLogsSql = @"
                 CREATE TABLE IF NOT EXISTS AppLogs (
                     Id           INTEGER PRIMARY KEY AUTOINCREMENT,

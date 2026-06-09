@@ -277,7 +277,7 @@ namespace RadiopaediaConnect.Data
             if (draft == null) return null;
 
             var sqlStudies = @"
-                SELECT Id, StudyInstanceUid, RemoteNodeName, Modality, Findings
+                SELECT Id, StudyInstanceUid, RemoteNodeName, Modality, Findings, RadiopaediaStudyId
                 FROM DraftCaseStudies
                 WHERE DraftCaseId = @CaseId";
 
@@ -291,7 +291,8 @@ namespace RadiopaediaConnect.Data
                     StudyInstanceUid = study.StudyInstanceUid ?? string.Empty,
                     RemoteNodeName = study.RemoteNodeName,
                     Modality = study.Modality,
-                    Findings = study.Findings
+                    Findings = study.Findings,
+                    RadiopaediaStudyId = study.RadiopaediaStudyId
                 };
 
                 var sqlSeries = @"
@@ -378,6 +379,15 @@ namespace RadiopaediaConnect.Data
                 RadiopaediaCaseId = radiopaediaCaseId,
                 ErrorMessage = errorMessage
             });
+        }
+
+        public async Task UpdateStudyRadiopaediaIdAsync(Guid caseId, string studyInstanceUid, string radiopaediaStudyId)
+        {
+            using var conn = GetConnection();
+            await conn.ExecuteAsync(
+                @"UPDATE DraftCaseStudies SET RadiopaediaStudyId = @RadiopaediaStudyId
+                  WHERE DraftCaseId = @CaseId AND StudyInstanceUid = @StudyUid",
+                new { CaseId = caseId, StudyUid = studyInstanceUid, RadiopaediaStudyId = radiopaediaStudyId });
         }
 
         public async Task<Guid> EnqueueJobAsync(DicomJob job)
@@ -572,7 +582,8 @@ namespace RadiopaediaConnect.Data
                     StudyInstanceUid = study.StudyInstanceUid ?? string.Empty,
                     RemoteNodeName = study.RemoteNodeName,
                     Modality = study.Modality,
-                    Findings = study.Findings
+                    Findings = study.Findings,
+                    RadiopaediaStudyId = study.RadiopaediaStudyId
                 };
 
                 // Get series for this study

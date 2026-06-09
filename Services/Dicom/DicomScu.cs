@@ -226,6 +226,12 @@ namespace RadiopaediaConnect.Services.Dicom
                 int y = months / 12;
                 int m = months % 12;
 
+                if (y >= 18)
+                {
+                    int rounded = (int)(Math.Round(y / 5.0) * 5);
+                    return $"{rounded} years";
+                }
+
                 if (y > 0)
                 {
                     return m > 0 ? $"{y} years, {m} months" : $"{y} years";
@@ -235,10 +241,31 @@ namespace RadiopaediaConnect.Services.Dicom
 
             if (ds.TryGetString(DicomTag.PatientAge, out var age) && !string.IsNullOrWhiteSpace(age))
             {
-                return age;
+                return FormatDicomAge(age);
             }
 
             return string.Empty;
+        }
+
+        // DICOM AS (Age String) format is "nnnU" where U = Y/M/W/D
+        private static string FormatDicomAge(string dicomAge)
+        {
+            if (string.IsNullOrWhiteSpace(dicomAge) || dicomAge.Length < 2)
+                return dicomAge;
+
+            char unit = char.ToUpper(dicomAge[^1]);
+            if (!int.TryParse(dicomAge[..^1], out int value))
+                return dicomAge;
+
+            return unit switch
+            {
+                'Y' when value >= 18 => $"{(int)(Math.Round(value / 5.0) * 5)} years",
+                'Y' => $"{value} years",
+                'M' => $"{value} months",
+                'W' => $"{value} weeks",
+                'D' => $"{value} days",
+                _ => dicomAge
+            };
         }
 
         public async Task<bool> TriggerCMoveAsync(string studyInstanceUid, string seriesInstanceUid, string remoteNodeName)
