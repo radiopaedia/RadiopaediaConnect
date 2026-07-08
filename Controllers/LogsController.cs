@@ -4,8 +4,11 @@ using RadiopaediaConnect.Services;
 
 namespace RadiopaediaConnect.Controllers
 {
+    // Anonymous by design: every endpoint is guarded by the admin session cookie instead
+    // of the Radiopaedia login (admins are not necessarily Radiopaedia users).
     [ApiController]
     [Route("api/logs")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public class LogsController : AdminControllerBase
     {
         private readonly AppLogsRepository _logsRepository;

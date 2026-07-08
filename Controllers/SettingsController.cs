@@ -10,8 +10,11 @@ using RadiopaediaConnect.Services.Dicom;
 
 namespace RadiopaediaConnect.Controllers
 {
+    // Anonymous by design: first-run setup happens before any Radiopaedia credentials exist,
+    // and admin access is guarded by the admin session cookie (AuthorizeAdmin) instead.
     [ApiController]
     [Route("api/settings")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public class SettingsController : AdminControllerBase
     {
         private readonly SettingsRepository _repository;

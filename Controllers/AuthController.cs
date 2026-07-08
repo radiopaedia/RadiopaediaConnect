@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using System.Threading.Tasks;
@@ -6,8 +7,13 @@ using RadiopaediaConnect.Services;
 
 namespace RadiopaediaConnect.Controllers
 {
+    /// <summary>
+    /// Anonymous by design: login must be reachable pre-auth, and me/quota check
+    /// User.Identity themselves so the frontend gets a clean 401 to render the login page.
+    /// </summary>
     [ApiController]
     [Route("api/auth")]
+    [AllowAnonymous]
     public class AuthController : ControllerBase
     {
         private readonly RadiopaediaApiClient _apiClient;

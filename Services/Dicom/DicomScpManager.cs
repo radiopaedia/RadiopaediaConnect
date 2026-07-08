@@ -14,6 +14,11 @@ namespace RadiopaediaConnect.Services.Dicom
         private IDicomServer? _server;
         private string _currentAeTitle = "RCONNECT_SCP";
 
+        // DICOM standard port 104; overridable for local dev (port already taken) or
+        // containers that prefer an unprivileged internal port behind a port mapping.
+        private static int ScpPort =>
+            int.TryParse(Environment.GetEnvironmentVariable("RCONNECT_SCP_PORT"), out var p) && p > 0 ? p : 104;
+
         public DicomScpManager(DicomRepository repository, ILogger<DicomScpManager> logger)
         {
             _repository = repository;
@@ -36,7 +41,7 @@ namespace RadiopaediaConnect.Services.Dicom
             {
                 _currentAeTitle = aeTitle;
 
-                _logger.LogInformation($"[DICOM] Starting SCP '{aeTitle}' on Port 104");
+                _logger.LogInformation($"[DICOM] Starting SCP '{aeTitle}' on Port {ScpPort}");
                 _logger.LogInformation($"[DICOM] Storage Root: {_repository.GetStorageRoot()}");
 
                 CStoreService.StaticRepository = _repository;
@@ -50,7 +55,7 @@ namespace RadiopaediaConnect.Services.Dicom
                 else
                     _logger.LogInformation("[DICOM] Allowed calling AE titles: {AETitles}", string.Join(", ", CStoreService.AllowedCallingAeTitles));
 
-                _server = DicomServerFactory.Create<CStoreService>(104);
+                _server = DicomServerFactory.Create<CStoreService>(ScpPort);
             }
         }
 

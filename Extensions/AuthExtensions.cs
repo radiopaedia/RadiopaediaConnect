@@ -33,6 +33,22 @@ namespace RadiopaediaConnect.Extensions
                 options.Cookie.SecurePolicy = CookieSecurePolicy.None;
                 options.Cookie.Name = "RadiopaediaConnectSession";
                 options.Cookie.Path = "/";
+
+                // All protected endpoints are JSON APIs — return status codes instead of
+                // redirecting the browser into the OAuth flow (which breaks XHR/fetch).
+                options.Events = new CookieAuthenticationEvents
+                {
+                    OnRedirectToLogin = context =>
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        return Task.CompletedTask;
+                    },
+                    OnRedirectToAccessDenied = context =>
+                    {
+                        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                        return Task.CompletedTask;
+                    }
+                };
             })
             .AddScheme<OAuthOptions, RadiopaediaOAuthHandler>("Radiopaedia", "Radiopaedia", options =>
             {

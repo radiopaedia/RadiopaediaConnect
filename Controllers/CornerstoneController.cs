@@ -121,8 +121,8 @@ namespace RadiopaediaConnect.Controllers
             var series = await _repository.GetSeriesAsync(seriesUid);
             if (series == null) return NotFound("Series not found");
 
-            var filePath = Path.Combine(series.StoragePath, filename);
-            if (!System.IO.File.Exists(filePath)) return NotFound("File not found");
+            var filePath = ResolveSeriesFile(series.StoragePath, filename);
+            if (filePath == null) return NotFound("File not found");
 
             return PhysicalFile(filePath, "application/octet-stream", filename);
         }
@@ -137,8 +137,8 @@ namespace RadiopaediaConnect.Controllers
             var series = await _repository.GetSeriesAsync(seriesUid);
             if (series == null) return NotFound("Series not found");
 
-            var filePath = Path.Combine(series.StoragePath, filename);
-            if (!System.IO.File.Exists(filePath)) return NotFound("File not found");
+            var filePath = ResolveSeriesFile(series.StoragePath, filename);
+            if (filePath == null) return NotFound("File not found");
 
             try
             {
@@ -164,6 +164,24 @@ namespace RadiopaediaConnect.Controllers
                 Console.WriteLine($"Error processing {filename}: {ex.Message}");
                 return PhysicalFile(filePath, "application/dicom", filename);
             }
+        }
+
+        /// <summary>
+        /// Resolves a user-supplied filename strictly to a .dcm file directly inside the
+        /// series storage folder. Returns null for traversal attempts ("..", path separators,
+        /// absolute paths) or missing files.
+        /// </summary>
+        private static string? ResolveSeriesFile(string storagePath, string filename)
+        {
+            if (string.IsNullOrEmpty(filename)) return null;
+            if (filename != Path.GetFileName(filename)) return null;
+            if (!filename.EndsWith(".dcm", StringComparison.OrdinalIgnoreCase)) return null;
+
+            var fullPath = Path.GetFullPath(Path.Combine(storagePath, filename));
+            if (!fullPath.StartsWith(Path.GetFullPath(storagePath), StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            return System.IO.File.Exists(fullPath) ? fullPath : null;
         }
 
         private DicomFile ExtractSingleFrame(DicomFile sourceFile, int frameIndex)

@@ -73,6 +73,17 @@ namespace RadiopaediaConnect
             // OAuth now reads credentials from DB via PostConfigure
             builder.Services.AddRadiopaediaAuthentication();
 
+            // Require a Radiopaedia login on every endpoint by default. Endpoints that must
+            // work before/without a Radiopaedia session (login, first-run setup, admin-session
+            // guarded settings/logs) opt out with [AllowAnonymous] and enforce their own checks.
+            builder.Services.AddAuthorization(options =>
+            {
+                options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
+                        Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme)
+                    .RequireAuthenticatedUser()
+                    .Build();
+            });
+
             builder.Services.AddTransient<DicomScu>();
             // DICOM anonymiser keep-list — loaded once from Config/dicom-allowlist.json. Registered
             // as a singleton (eagerly resolved at startup below) so the anonymiser and the
@@ -146,7 +157,8 @@ namespace RadiopaediaConnect
             app.UseAuthorization();
 
             app.MapControllers();
-            app.MapFallbackToFile("index.html");
+            // SPA shell must load for unauthenticated users so the login page can render.
+            app.MapFallbackToFile("index.html").AllowAnonymous();
 
             app.Run();
         }

@@ -3,8 +3,10 @@ using RadiopaediaConnect.Services;
 
 namespace RadiopaediaConnect.Controllers
 {
+    // Anonymous by design: guarded by the admin session cookie, not the Radiopaedia login.
     [ApiController]
     [Route("api/notifications")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public class NotificationsController : AdminControllerBase
     {
         private readonly INotificationService _notificationService;

@@ -118,7 +118,9 @@ namespace RadiopaediaConnect.Controllers
             }
         }
 
+        // Admin-session guarded (not Radiopaedia login) — admins may not be Radiopaedia users.
         [HttpGet("all-cases")]
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         public async Task<IActionResult> GetAllCases()
         {
             if (!AuthorizeAdmin(_sessionService)) return Unauthorized(new { message = "Invalid admin session." });
@@ -135,7 +137,9 @@ namespace RadiopaediaConnect.Controllers
             }
         }
 
+        // Admin-session guarded (not Radiopaedia login) — admins may not be Radiopaedia users.
         [HttpGet("{caseId:guid}/admin")]
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         public async Task<IActionResult> GetCaseDetailAdmin(Guid caseId)
         {
             if (!AuthorizeAdmin(_sessionService)) return Unauthorized(new { message = "Invalid admin session." });
