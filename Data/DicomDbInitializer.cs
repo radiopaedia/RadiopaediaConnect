@@ -108,6 +108,20 @@ namespace RadiopaediaConnect.Data
             // Radiopaedia study ID assigned after upload, used to cross-reference originals API
             EnsureColumnExists(conn, "DraftCaseStudies", "RadiopaediaStudyId", "TEXT");
 
+            // Per-series upload completion marker. Lets the processor distinguish
+            // already-uploaded series from newly appended ones when a case is re-queued.
+            EnsureColumnExists(conn, "DraftCaseSeries", "UploadedAt", "TEXT");
+
+            // Backfill: series belonging to cases completed before this column existed
+            // were all uploaded, so mark them to prevent re-upload on append.
+            conn.Execute(@"
+                UPDATE DraftCaseSeries SET UploadedAt = datetime('now')
+                WHERE UploadedAt IS NULL
+                  AND DraftCaseStudyId IN (
+                      SELECT s.Id FROM DraftCaseStudies s
+                      JOIN DraftCases c ON c.Id = s.DraftCaseId
+                      WHERE c.Status = 'Completed')");
+
             var createAppLogsSql = @"
                 CREATE TABLE IF NOT EXISTS AppLogs (
                     Id           INTEGER PRIMARY KEY AUTOINCREMENT,

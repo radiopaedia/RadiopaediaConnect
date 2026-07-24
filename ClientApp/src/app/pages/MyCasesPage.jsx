@@ -85,6 +85,7 @@ const MyCasesPage = () => {
                     onRefresh={fetchCases}
                     loadingMessage="Loading your cases..."
                     actions={addNewCaseButton}
+                    onAddToCase={(c) => navigate(`/?appendTo=${c.id}`)}
                 />
             </div>
         </MainLayout>

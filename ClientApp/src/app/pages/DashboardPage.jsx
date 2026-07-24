@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import MainLayout from './MainLayout';
 import PacsSearchForm from './components/PacsSearchForm';
 import CaseDetailsForm from './components/CaseDetailsForm';
@@ -67,6 +67,10 @@ const DashboardPage = ({ user, onLogout }) => {
     // Individual series may still be forced to 'png' by constraints (redactions, multiframe culling).
     const [uploadMethod, setUploadMethod] = useState('dicom');
 
+    // When set, the draft view appends studies to this existing case instead of
+    // creating a new one. Holds the case detail from /api/cases/{id}.
+    const [appendTarget, setAppendTarget] = useState(null);
+
     // Anonymisation details drawer (shared across the case)
     const [anonDrawerOpen, setAnonDrawerOpen] = useState(false);
 
@@ -119,6 +123,81 @@ const DashboardPage = ({ user, onLogout }) => {
         dragOverItem.current = null;
     };
 
+    // Entry point for "add to existing case" — e.g. /?appendTo={caseId} from My Cases
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const appendTo = params.get('appendTo');
+        if (appendTo) {
+            window.history.replaceState({}, '', '/');
+            enterAppendMode(appendTo);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Loads an existing completed case and opens the draft view in append mode:
+    // same study/series pickers, but submission adds to the case on Radiopaedia.
+    const enterAppendMode = async (caseId, fallbackNodeName = null) => {
+        setIsInitializingDraft(true);
+        try {
+            const res = await fetch(`/api/cases/${caseId}`);
+            if (!res.ok) throw new Error('Failed to load case details');
+            const detail = await res.json();
+
+            if (detail.status !== 'Completed' || !detail.radiopaediaCaseId) {
+                alert('Studies can only be added to a case that has completed uploading to Radiopaedia.');
+                return;
+            }
+            if (!detail.patientId) {
+                alert('This case has no patient ID recorded, so its studies cannot be located on PACS.');
+                return;
+            }
+            const nodeName = detail.studies?.[0]?.remoteNodeName || fallbackNodeName;
+            if (!nodeName) {
+                alert('Could not determine which PACS node this case was retrieved from.');
+                return;
+            }
+
+            const response = await fetch('/api/dicom/studies', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    patientId: detail.patientId,
+                    remoteNodeName: nodeName,
+                    patientName: '',
+                    accessionNumber: ''
+                })
+            });
+            if (!response.ok) throw new Error('Failed to retrieve patient studies from PACS');
+
+            const results = await response.json();
+            const relatedStudies = results.map(study => ({ ...study, remoteNodeName: nodeName }));
+            relatedStudies.sort((a, b) => new Date(b.studyDate) - new Date(a.studyDate));
+
+            setAppendTarget(detail);
+            setPatientInfo({
+                name: (detail.patientName || '').replace('^', ', '),
+                id: detail.patientId,
+                dob: detail.patientDob,
+                sex: detail.sex
+            });
+            setPatientStudies(relatedStudies);
+            setErrors({});
+            setViewMode('draft');
+
+            if (relatedStudies.length > 0) {
+                const first = relatedStudies[0];
+                initStudyInDraft(first);
+                setActiveStudyUid(first.studyInstanceUid);
+                fetchSeriesForStudy(first);
+            }
+        } catch (error) {
+            console.error(error);
+            alert('Error preparing case for additional studies: ' + error.message);
+        } finally {
+            setIsInitializingDraft(false);
+        }
+    };
+
     // Clears everything to return to a pristine "Search" state
     const resetToSearch = () => {
         setStudies([]);
@@ -144,6 +223,7 @@ const DashboardPage = ({ user, onLogout }) => {
 
         setUploadMethod('dicom');
         setAnonDrawerOpen(false);
+        setAppendTarget(null);
 
         setViewMode('search');
     };
@@ -296,6 +376,12 @@ const DashboardPage = ({ user, onLogout }) => {
     };
 
     const validateForm = () => {
+        // Case details are fixed when appending — only the series selection matters
+        if (appendTarget) {
+            setErrors({});
+            return true;
+        }
+
         const newErrors = {};
         if (!caseData.title.trim()) newErrors.title = 'Title is required';
         if (!caseData.system) newErrors.system = 'System is required';
@@ -402,6 +488,11 @@ const DashboardPage = ({ user, onLogout }) => {
             return null;
         }
 
+        // Append mode only sends the new studies/series — case details already exist
+        if (appendTarget) {
+            return { studies: studiesPayload };
+        }
+
         const systemId = SYSTEM_MAP[caseData.system];
         const certaintyId = Number(caseData.diagnostic_certainty);
 
@@ -425,8 +516,11 @@ const DashboardPage = ({ user, onLogout }) => {
     };
 
     const submitCaseToServer = async (payload) => {
+        const url = appendTarget
+            ? `/api/cases/${appendTarget.id}/append`
+            : '/api/cases/submit';
         try {
-            const res = await fetch('/api/cases/submit', {
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -492,6 +586,14 @@ const DashboardPage = ({ user, onLogout }) => {
         setPendingDraftStudy(null);
     };
 
+    const handleAddToExistingCase = async (caseItem) => {
+        setShowDuplicateWarning(false);
+        const fallbackNode = pendingDraftStudy?.remoteNodeName;
+        setPendingDraftStudy(null);
+        setExistingPatientCases([]);
+        await enterAppendMode(caseItem.id, fallbackNode);
+    };
+
     const handleViewExistingCase = (caseId) => {
         // Hide the warning modal and show the case detail drawer
         setShowDuplicateWarning(false);
@@ -533,6 +635,10 @@ const DashboardPage = ({ user, onLogout }) => {
 
     const activeStudy = patientStudies.find(s => s.studyInstanceUid === activeStudyUid);
     const activeDraftData = draftContent[activeStudyUid] || { findings: '', seriesSelection: {} };
+
+    // Studies already uploaded as part of the append target case
+    const studyUidsInCase = new Set((appendTarget?.studies || []).map(s => s.studyInstanceUid));
+    const activeStudyInCase = !!appendTarget && studyUidsInCase.has(activeStudyUid);
 
     const totalStudiesCount = patientStudies.length;
     const selectedStudiesCount = patientStudies.reduce((acc, s) => {
@@ -650,8 +756,13 @@ const DashboardPage = ({ user, onLogout }) => {
                                                                 </div>
                                                             </td>
                                                             <td className="px-4 py-3 text-sm text-slate-900 dark:text-slate-200">
-                                                                <div className={`font-medium ${hasSelectedSeries ? 'text-green-700 dark:text-green-400' : ''}`}>
+                                                                <div className={`font-medium flex items-center gap-2 ${hasSelectedSeries ? 'text-green-700 dark:text-green-400' : ''}`}>
                                                                     {study.studyDescription || 'No description'}
+                                                                    {studyUidsInCase.has(study.studyInstanceUid) && (
+                                                                        <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 whitespace-nowrap" title="This study is already part of the case — selected series will be added to it">
+                                                                            In case
+                                                                        </span>
+                                                                    )}
                                                                 </div>
                                                                 {hasSelectedSeries && (
                                                                     <div className="text-xs text-green-600 mt-1 flex items-center">
@@ -673,15 +784,58 @@ const DashboardPage = ({ user, onLogout }) => {
 
                                 </div>
                             </div>
-                            {/* RIGHT COLUMN: Case Details Form */}
+                            {/* RIGHT COLUMN: Case Details Form, or target case summary when appending */}
                             <div className="h-full min-h-0">
-                                <CaseDetailsForm
-                                    formData={caseData}
-                                    onChange={handleCaseChange}
-                                    errors={errors}
-                                    systemMap={SYSTEM_MAP}
-                                    certaintyOptions={DIAGNOSTIC_CERTAINTY_OPTIONS}
-                                />
+                                {appendTarget ? (
+                                    <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-emerald-300 dark:border-emerald-800 overflow-hidden">
+                                        <div className="px-4 py-3 bg-emerald-50 dark:bg-emerald-900/20 border-b border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
+                                            <svg className="w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                                            </svg>
+                                            <h3 className="text-sm font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wide">
+                                                Adding to Existing Case
+                                            </h3>
+                                        </div>
+                                        <div className="p-4 space-y-3">
+                                            <div>
+                                                <div className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1">Case Title</div>
+                                                <div className="text-lg font-bold text-slate-900 dark:text-white">
+                                                    {appendTarget.title || 'Untitled Case'}
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-4 text-sm text-slate-600 dark:text-slate-300">
+                                                <span>Created {new Date(appendTarget.createdAt).toLocaleDateString('en-AU')}</span>
+                                                <span>&middot;</span>
+                                                <span>{appendTarget.studies?.length || 0} stud{(appendTarget.studies?.length || 0) === 1 ? 'y' : 'ies'} uploaded</span>
+                                            </div>
+                                            <a
+                                                href={`https://radiopaedia.org/cases/${appendTarget.radiopaediaCaseId}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1.5 text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 font-semibold"
+                                            >
+                                                View case on Radiopaedia
+                                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                </svg>
+                                            </a>
+                                            <div className="pt-2 border-t border-slate-200 dark:border-slate-700 text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+                                                Select the studies and series to add below. They will be uploaded to this
+                                                existing Radiopaedia case — studies already in the case are marked in the
+                                                list. Case details (title, presentation, discussion) are not editable here;
+                                                edit them on Radiopaedia directly.
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <CaseDetailsForm
+                                        formData={caseData}
+                                        onChange={handleCaseChange}
+                                        errors={errors}
+                                        systemMap={SYSTEM_MAP}
+                                        certaintyOptions={DIAGNOSTIC_CERTAINTY_OPTIONS}
+                                    />
+                                )}
                             </div>
                         </div>
 
@@ -796,28 +950,37 @@ const DashboardPage = ({ user, onLogout }) => {
 
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Study Findings</label>
-                                    <textarea
-                                        value={activeDraftData.findings}
-                                        onChange={handleStudyFindingsChange}
-                                        rows={8}
-                                        className="w-full rounded-md border-slate-300 dark:bg-slate-900 dark:border-slate-600 shadow-sm sm:text-sm py-3 px-4 border resize-y min-h-[150px]"
-                                        placeholder="Describe findings specific to this study..."
-                                    />
+                                    {activeStudyInCase ? (
+                                        <div className="rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 px-4 py-3 text-sm text-slate-500 dark:text-slate-400">
+                                            This study already exists on the case, so selected series will be added to it
+                                            directly. Its findings cannot be changed here — edit them on Radiopaedia.
+                                        </div>
+                                    ) : (
+                                        <textarea
+                                            value={activeDraftData.findings}
+                                            onChange={handleStudyFindingsChange}
+                                            rows={8}
+                                            className="w-full rounded-md border-slate-300 dark:bg-slate-900 dark:border-slate-600 shadow-sm sm:text-sm py-3 px-4 border resize-y min-h-[150px]"
+                                            placeholder="Describe findings specific to this study..."
+                                        />
+                                    )}
                                 </div>
                             </div>
                         </div>
 
-                        {/* Case Discussion */}
-                        <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
-                            <label className="block text-lg font-bold text-slate-900 dark:text-white mb-3">Case Discussion</label>
-                            <textarea
-                                value={caseDiscussion}
-                                onChange={(e) => setCaseDiscussion(e.target.value)}
-                                rows={8}
-                                className="w-full rounded-md border-slate-300 dark:bg-slate-900 dark:border-slate-600 shadow-sm sm:text-sm py-3 px-4 border"
-                                placeholder="Comprehensive discussion of the case, diagnosis, and differential..."
-                            />
-                        </div>
+                        {/* Case Discussion (fixed when appending — edit on Radiopaedia instead) */}
+                        {!appendTarget && (
+                            <div className="bg-white dark:bg-slate-800 shadow rounded-lg border border-slate-200 dark:border-slate-700 p-6">
+                                <label className="block text-lg font-bold text-slate-900 dark:text-white mb-3">Case Discussion</label>
+                                <textarea
+                                    value={caseDiscussion}
+                                    onChange={(e) => setCaseDiscussion(e.target.value)}
+                                    rows={8}
+                                    className="w-full rounded-md border-slate-300 dark:bg-slate-900 dark:border-slate-600 shadow-sm sm:text-sm py-3 px-4 border"
+                                    placeholder="Comprehensive discussion of the case, diagnosis, and differential..."
+                                />
+                            </div>
+                        )}
 
                         <div className="flex justify-end gap-4 pt-4 pb-12">
                             <button
@@ -830,7 +993,7 @@ const DashboardPage = ({ user, onLogout }) => {
                                 onClick={handleSubmit}
                                 className="px-8 py-4 bg-indigo-600 text-white text-lg font-bold rounded shadow-xl hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-500/50 transition-all transform hover:-translate-y-0.5"
                             >
-                                Upload Anonymised Draft Case
+                                {appendTarget ? 'Upload Additional Studies to Case' : 'Upload Anonymised Draft Case'}
                             </button>
                         </div>
                     </div>
@@ -843,6 +1006,7 @@ const DashboardPage = ({ user, onLogout }) => {
                 onClose={handleDuplicateWarningClose}
                 onContinue={handleDuplicateWarningContinue}
                 onViewCase={handleViewExistingCase}
+                onAddToCase={handleAddToExistingCase}
                 existingCases={existingPatientCases}
                 patientName={pendingDraftStudy?.patientName?.replace('^', ', ')}
                 patientId={pendingDraftStudy?.patientId}
@@ -852,6 +1016,7 @@ const DashboardPage = ({ user, onLogout }) => {
             <SubmissionSuccessModal
                 isOpen={showSuccessModal}
                 caseId={submittedCaseId}
+                isAppend={!!appendTarget}
                 onGoToMyCases={handleSuccessGoToMyCases}
                 onAddNewCase={handleSuccessAddNewCase}
                 onViewCase={handleSuccessViewCase}

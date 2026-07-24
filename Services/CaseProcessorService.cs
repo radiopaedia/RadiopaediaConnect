@@ -58,28 +58,58 @@ namespace RadiopaediaConnect.Services
                 var draftEntity = await _repository.GetDraftCaseAsync(caseId);
                 string username = draftEntity?.Username ?? "unknown_user";
 
-                rCaseId = await _apiClient.CreateCaseAsync(draftEntity, username);
-                _logger.LogInformation("[PIPELINE] Case Created! Radiopaedia ID: {RCaseId}", rCaseId);
-                await _repository.UpdateCaseStatusAsync(caseId, "Processing", rCaseId);
+                // Reuse the Radiopaedia case when it already exists (append / retry);
+                // otherwise create it. Same pattern per study and per series below, so
+                // re-running a case only uploads what hasn't been uploaded yet.
+                if (!string.IsNullOrEmpty(draftEntity?.RadiopaediaCaseId))
+                {
+                    rCaseId = draftEntity.RadiopaediaCaseId;
+                    _logger.LogInformation("[PIPELINE] Appending to existing Radiopaedia Case {RCaseId}", rCaseId);
+                    await _repository.UpdateCaseStatusAsync(caseId, "Processing", rCaseId);
+                }
+                else
+                {
+                    rCaseId = await _apiClient.CreateCaseAsync(draftEntity, username);
+                    _logger.LogInformation("[PIPELINE] Case Created! Radiopaedia ID: {RCaseId}", rCaseId);
+                    await _repository.UpdateCaseStatusAsync(caseId, "Processing", rCaseId);
+                }
 
                 foreach (var study in fullCase.Studies)
                 {
-                    string rawModality = study.Series[0].Modality;
-                    string radiopaediaModality = MapToRadiopaediaModality(rawModality);
-                    _logger.LogInformation("[PIPELINE] Processing Study: {StudyUid} → {Modality}",
-                        study.StudyInstanceUid, radiopaediaModality);
-
-                    var studyPayload = new SubmitCaseStudyDto
+                    var pendingSeries = study.Series.Where(s => !s.IsUploaded).ToList();
+                    if (pendingSeries.Count == 0)
                     {
-                        Modality = radiopaediaModality,
-                        Findings = study.Findings
-                    };
+                        _logger.LogInformation("[PIPELINE] Study {StudyUid}: all series already uploaded — skipping.",
+                            study.StudyInstanceUid);
+                        continue;
+                    }
 
-                    string rStudyId = await _apiClient.CreateStudyAsync(rCaseId, studyPayload, username);
-                    _logger.LogInformation("[PIPELINE] Study Created! Radiopaedia ID: {RStudyId}", rStudyId);
-                    await _repository.UpdateStudyRadiopaediaIdAsync(caseId, study.StudyInstanceUid, rStudyId);
+                    string rStudyId;
+                    if (!string.IsNullOrEmpty(study.RadiopaediaStudyId))
+                    {
+                        rStudyId = study.RadiopaediaStudyId;
+                        _logger.LogInformation("[PIPELINE] Study {StudyUid} already exists on Radiopaedia (ID: {RStudyId})",
+                            study.StudyInstanceUid, rStudyId);
+                    }
+                    else
+                    {
+                        string rawModality = study.Series[0].Modality;
+                        string radiopaediaModality = MapToRadiopaediaModality(rawModality);
+                        _logger.LogInformation("[PIPELINE] Processing Study: {StudyUid} → {Modality}",
+                            study.StudyInstanceUid, radiopaediaModality);
 
-                    foreach (var series in study.Series)
+                        var studyPayload = new SubmitCaseStudyDto
+                        {
+                            Modality = radiopaediaModality,
+                            Findings = study.Findings
+                        };
+
+                        rStudyId = await _apiClient.CreateStudyAsync(rCaseId, studyPayload, username);
+                        _logger.LogInformation("[PIPELINE] Study Created! Radiopaedia ID: {RStudyId}", rStudyId);
+                        await _repository.UpdateStudyRadiopaediaIdAsync(caseId, study.StudyInstanceUid, rStudyId);
+                    }
+
+                    foreach (var series in pendingSeries)
                     {
                         _logger.LogInformation("[PIPELINE] Processing Series {SeriesUid} (method: {Method})",
                             series.SeriesInstanceUid, series.UploadMethod);
@@ -98,6 +128,10 @@ namespace RadiopaediaConnect.Services
                             await ProcessPngSeriesAsync(
                                 rCaseId, rStudyId, dicomPath, series, username);
                         }
+
+                        // Non-exception completion (including empty-selection skips) counts
+                        // as done — prevents duplicate uploads if the case is re-queued.
+                        await _repository.MarkSeriesUploadedAsync(series.RowId);
                     }
                 }
 

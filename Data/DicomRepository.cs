@@ -81,6 +81,7 @@ namespace RadiopaediaConnect.Data
                     RemoteNodeName = s.RemoteNodeName,
                     Modality = s.Modality,
                     Findings = s.Findings,
+                    RadiopaediaStudyId = (string?)s.RadiopaediaStudyId,
                     Series = new List<SubmitCaseSeriesDto>()
                 };
 
@@ -94,6 +95,7 @@ namespace RadiopaediaConnect.Data
 
                     studyDto.Series.Add(new SubmitCaseSeriesDto
                     {
+                        RowId = (long)ser.Id,
                         SeriesInstanceUid = ser.SeriesInstanceUid,
                         SeriesDescription = ser.SeriesDescription,
                         Modality = ser.Modality,
@@ -101,7 +103,8 @@ namespace RadiopaediaConnect.Data
                         End = (int)ser.EndFrame,
                         Step = (int)ser.StepFrame,
                         Redactions = redactions ?? new List<RedactionZoneDto>(),
-                        UploadMethod = (string?)ser.UploadMethod ?? "dicom"
+                        UploadMethod = (string?)ser.UploadMethod ?? "dicom",
+                        IsUploaded = ser.UploadedAt != null
                     });
                 }
                 result.Studies.Add(studyDto);
@@ -224,6 +227,113 @@ namespace RadiopaediaConnect.Data
                 trans.Rollback();
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Appends studies/series to an existing draft case and re-queues it for upload.
+        /// Studies matching an existing StudyInstanceUid on the case get their series added
+        /// to that study row; new UIDs create new study rows. The processor skips anything
+        /// already marked uploaded, so only the appended content is sent to Radiopaedia.
+        /// </summary>
+        public async Task AppendToDraftCaseAsync(Guid caseId, List<SubmitCaseStudyDto> studies)
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            using var trans = conn.BeginTransaction();
+
+            try
+            {
+                foreach (var study in studies)
+                {
+                    var studyId = await conn.ExecuteScalarAsync<long?>(
+                        @"SELECT Id FROM DraftCaseStudies
+                          WHERE DraftCaseId = @CaseId AND StudyInstanceUid = @StudyUid",
+                        new { CaseId = caseId, StudyUid = study.StudyInstanceUid }, trans);
+
+                    if (studyId == null)
+                    {
+                        studyId = await conn.ExecuteScalarAsync<long>(@"
+                            INSERT INTO DraftCaseStudies (
+                                DraftCaseId, StudyInstanceUid, RemoteNodeName, Modality, Findings
+                            ) VALUES (
+                                @DraftCaseId, @StudyUid, @Node, @Mod, @Find
+                            );
+                            SELECT last_insert_rowid();",
+                            new
+                            {
+                                DraftCaseId = caseId,
+                                StudyUid = study.StudyInstanceUid,
+                                Node = study.RemoteNodeName,
+                                Mod = study.Modality,
+                                Find = study.Findings
+                            }, trans);
+                    }
+
+                    foreach (var series in study.Series)
+                    {
+                        await conn.ExecuteAsync(@"
+                            INSERT INTO DraftCaseSeries (
+                                DraftCaseStudyId, SeriesInstanceUid, SeriesDescription, Modality,
+                                StartFrame, EndFrame, StepFrame, RedactionsJson, UploadMethod
+                            ) VALUES (
+                                @StudyId, @SeriesUid, @Desc, @Mod,
+                                @Start, @End, @Step, @Redactions, @UploadMethod
+                            )",
+                            new
+                            {
+                                StudyId = studyId,
+                                SeriesUid = series.SeriesInstanceUid,
+                                Desc = series.SeriesDescription,
+                                Mod = series.Modality,
+                                Start = series.Start,
+                                End = series.End,
+                                Step = series.Step,
+                                Redactions = JsonSerializer.Serialize(series.Redactions),
+                                UploadMethod = series.UploadMethod
+                            }, trans);
+                    }
+                }
+
+                await conn.ExecuteAsync(
+                    "UPDATE DraftCases SET Status = 'Queued', ErrorMessage = NULL WHERE Id = @Id",
+                    new { Id = caseId }, trans);
+
+                var primaryStudy = studies.First();
+                await conn.ExecuteAsync(@"
+                    INSERT INTO DicomJobs (
+                        Id, StudyInstanceUid, SeriesInstanceUid, RemoteAeTitle,
+                        Type, Status, Priority, CreatedAt, ResourceId
+                    ) VALUES (
+                        @Id, @StudyUid, NULL, @RemoteNode,
+                        @Type, @Status, @Priority, @CreatedAt, @ResourceId
+                    )",
+                    new
+                    {
+                        Id = Guid.NewGuid(),
+                        StudyUid = primaryStudy.StudyInstanceUid,
+                        RemoteNode = primaryStudy.RemoteNodeName ?? "UNKNOWN",
+                        Type = JobType.Upload,
+                        Status = JobStatus.Pending,
+                        Priority = 5,
+                        CreatedAt = DateTime.UtcNow,
+                        ResourceId = caseId
+                    }, trans);
+
+                trans.Commit();
+            }
+            catch
+            {
+                trans.Rollback();
+                throw;
+            }
+        }
+
+        public async Task MarkSeriesUploadedAsync(long seriesRowId)
+        {
+            using var conn = GetConnection();
+            await conn.ExecuteAsync(
+                "UPDATE DraftCaseSeries SET UploadedAt = @Now WHERE Id = @Id",
+                new { Id = seriesRowId, Now = DateTime.UtcNow });
         }
 
         public async Task<DraftCase?> GetDraftCaseAsync(Guid caseId)

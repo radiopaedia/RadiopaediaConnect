@@ -226,6 +226,52 @@ namespace RadiopaediaConnect.Controllers
             }
         }
 
+        /// <summary>
+        /// Append studies/series to an existing, already-uploaded case.
+        /// Studies matching an existing StudyInstanceUid on the case have their series
+        /// added to that study on Radiopaedia; new UIDs become new studies.
+        /// </summary>
+        [HttpPost("{caseId:guid}/append")]
+        public async Task<IActionResult> AppendToCase(Guid caseId, [FromBody] AppendCaseDto request)
+        {
+            var username = User.FindFirst("urn:radiopaedia:username")?.Value;
+
+            if (string.IsNullOrEmpty(username))
+            {
+                return Unauthorized("User session invalid. Please log in again.");
+            }
+
+            if (request.Studies.Count == 0 || request.Studies.Any(s => s.Series.Count == 0))
+                return BadRequest("Append request must contain at least one study, each with at least one series.");
+
+            var draft = await _repository.GetDraftCaseAsync(caseId);
+            if (draft == null || !string.Equals(draft.Username, username, StringComparison.OrdinalIgnoreCase))
+                return NotFound("Case not found.");
+
+            if (draft.Status != "Completed" || string.IsNullOrEmpty(draft.RadiopaediaCaseId))
+                return BadRequest("Studies can only be added to a case that has completed uploading to Radiopaedia.");
+
+            try
+            {
+                _logger.LogInformation("Received append of {StudyCount} study(ies) to case {CaseId} from {Username}",
+                    request.Studies.Count, caseId, username);
+
+                await _repository.AppendToDraftCaseAsync(caseId, request.Studies);
+
+                return Ok(new
+                {
+                    Success = true,
+                    CaseId = caseId,
+                    Message = "Additional studies queued for upload."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to append to case {CaseId}.", caseId);
+                return StatusCode(500, "Internal server error while appending to case.");
+            }
+        }
+
         [HttpPost("submit")]
         public async Task<IActionResult> SubmitCase([FromBody] SubmitCaseDto request)
         {

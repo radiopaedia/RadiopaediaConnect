@@ -41,6 +41,25 @@ namespace RadiopaediaConnect.Models
 
         [JsonPropertyName("series")]
         public List<SubmitCaseSeriesDto> Series { get; set; } = new();
+
+        /// <summary>
+        /// Set when this study already exists on Radiopaedia (populated from the DB by
+        /// GetFullDraftCaseAsync, never from the client). The pipeline skips study
+        /// creation and uploads new series directly against this ID.
+        /// </summary>
+        [JsonIgnore]
+        public string? RadiopaediaStudyId { get; set; }
+    }
+
+    /// <summary>
+    /// Request body for appending studies/series to an existing, already-uploaded case.
+    /// Studies whose StudyInstanceUid matches an existing study on the case have their
+    /// series added to that study; otherwise a new study is created.
+    /// </summary>
+    public class AppendCaseDto
+    {
+        [JsonPropertyName("studies")]
+        public List<SubmitCaseStudyDto> Studies { get; set; } = new();
     }
 
     public class SubmitCaseSeriesDto
@@ -76,6 +95,14 @@ namespace RadiopaediaConnect.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonIgnore]
         public bool RequestsDicom => UploadMethod == "dicom" && !Redactions.Any();
+
+        /// <summary>DraftCaseSeries row ID (populated from the DB, never from the client).</summary>
+        [JsonIgnore]
+        public long RowId { get; set; }
+
+        /// <summary>True when this series has already been uploaded to Radiopaedia.</summary>
+        [JsonIgnore]
+        public bool IsUploaded { get; set; }
     }
 
     public class RedactionZoneDto

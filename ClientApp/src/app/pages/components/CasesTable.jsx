@@ -45,6 +45,7 @@ const formatDate = (dateString, dateOnly = false) => {
  *   adminMode      – use admin endpoints for detail / logs drawers
  *   actions        – optional ReactNode rendered after the Refresh button (e.g. "Add New Case")
  *   loadingMessage – override the loading text
+ *   onAddToCase    – optional (caseObj) => void; shows an "Add imaging" action on completed cases
  */
 const CasesTable = ({
     cases,
@@ -55,6 +56,7 @@ const CasesTable = ({
     adminMode = false,
     actions = null,
     loadingMessage = 'Loading cases...',
+    onAddToCase = null,
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState(null);
@@ -298,6 +300,18 @@ const CasesTable = ({
                                                             </svg>
                                                             Radiopaedia
                                                         </a>
+                                                    )}
+                                                    {onAddToCase && hasLink && (
+                                                        <button
+                                                            onClick={() => onAddToCase(c)}
+                                                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors"
+                                                            title="Add more studies or series to this case"
+                                                        >
+                                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                                                            </svg>
+                                                            Add Imaging
+                                                        </button>
                                                     )}
                                                     <button
                                                         onClick={() => { setLogsCase(c); setLogsOpen(true); }}

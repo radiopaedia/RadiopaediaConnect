@@ -6,6 +6,7 @@ const DuplicatePatientWarningModal = ({
     onClose,
     onContinue,
     onViewCase,
+    onAddToCase,
     existingCases = [],
     patientName,
     patientId
@@ -104,38 +105,55 @@ const DuplicatePatientWarningModal = ({
                                         Click on a case to view its details:
                                     </p>
                                     <div className="space-y-2">
-                                        {existingCases.map((caseItem) => (
-                                            <button
-                                                key={caseItem.id}
-                                                onClick={() => onViewCase(caseItem.id)}
-                                                className="w-full text-left p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group"
-                                            >
-                                                <div className="flex items-start justify-between">
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="font-medium text-slate-900 dark:text-white truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
-                                                            {caseItem.title || 'Untitled Case'}
+                                        {existingCases.map((caseItem) => {
+                                            const canAddTo = onAddToCase && caseItem.status === 'Completed' && caseItem.radiopaediaCaseId;
+                                            return (
+                                                <div
+                                                    key={caseItem.id}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onClick={() => onViewCase(caseItem.id)}
+                                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onViewCase(caseItem.id); }}
+                                                    className="w-full text-left p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group cursor-pointer"
+                                                >
+                                                    <div className="flex items-start justify-between">
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="font-medium text-slate-900 dark:text-white truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
+                                                                {caseItem.title || 'Untitled Case'}
+                                                            </div>
+                                                            <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2">
+                                                                <span>{formatDate(caseItem.createdAt)}</span>
+                                                                {caseItem.age && (
+                                                                    <>
+                                                                        <span>{'\u00B7'}</span>
+                                                                        <span>{caseItem.age}</span>
+                                                                    </>
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2">
-                                                            <span>{formatDate(caseItem.createdAt)}</span>
-                                                            {caseItem.age && (
-                                                                <>
-                                                                    <span>{'\u00B7'}</span>
-                                                                    <span>{caseItem.age}</span>
-                                                                </>
-                                                            )}
+                                                        <div className="flex items-center gap-2 ml-3">
+                                                            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getStatusBadge(caseItem.status)}`}>
+                                                                {caseItem.status}
+                                                            </span>
+                                                            <svg className="w-4 h-4 text-slate-400 group-hover:text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
+                                                            </svg>
                                                         </div>
                                                     </div>
-                                                    <div className="flex items-center gap-2 ml-3">
-                                                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getStatusBadge(caseItem.status)}`}>
-                                                            {caseItem.status}
-                                                        </span>
-                                                        <svg className="w-4 h-4 text-slate-400 group-hover:text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" />
-                                                        </svg>
-                                                    </div>
+                                                    {canAddTo && (
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); onAddToCase(caseItem); }}
+                                                            className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors"
+                                                        >
+                                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                                                            </svg>
+                                                            Add imaging to this case
+                                                        </button>
+                                                    )}
                                                 </div>
-                                            </button>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 </div>
 

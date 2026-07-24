@@ -4,6 +4,7 @@ import { Transition, Dialog } from '@headlessui/react';
 const SubmissionSuccessModal = ({
     isOpen,
     caseId,
+    isAppend = false,
     onGoToMyCases,
     onAddNewCase,
     onViewCase
@@ -47,10 +48,12 @@ const SubmissionSuccessModal = ({
                                         </div>
                                         <div>
                                             <Dialog.Title className="text-lg font-bold text-green-800 dark:text-green-200">
-                                                Case Submitted
+                                                {isAppend ? 'Studies Queued' : 'Case Submitted'}
                                             </Dialog.Title>
                                             <p className="text-sm text-green-700 dark:text-green-300 mt-1">
-                                                Your upload case has been successfully submitted.
+                                                {isAppend
+                                                    ? 'The additional studies have been queued for upload to the existing case.'
+                                                    : 'Your upload case has been successfully submitted.'}
                                             </p>
                                         </div>
                                     </div>
