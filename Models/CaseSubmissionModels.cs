@@ -81,6 +81,55 @@ namespace RadiopaediaConnect.Models
         public List<RedactionZoneDto> Redactions { get; set; } = new();
 
         /// <summary>
+        /// Set when the user split a source series into independent parts in the picker
+        /// (e.g. the two planes of a biplane angio run, which the PACS stores under one
+        /// SeriesInstanceUID). Null means "the whole series" — the default for everything else.
+        /// </summary>
+        [JsonPropertyName("subseriesKey")]
+        public string? SubSeriesKey { get; set; }
+
+        /// <summary>Display suffix for the split part, e.g. "BIPLANE A".</summary>
+        [JsonPropertyName("subseriesLabel")]
+        public string? SubSeriesLabel { get; set; }
+
+        /// <summary>
+        /// The SOP Instance UIDs belonging to this part. Empty means every instance in the
+        /// series, so unsplit series behave exactly as before.
+        /// </summary>
+        [JsonPropertyName("sopInstanceUids")]
+        public List<string> SopInstanceUids { get; set; } = new();
+
+        [JsonIgnore]
+        public bool IsSubSeries => !string.IsNullOrEmpty(SubSeriesKey);
+
+        /// <summary>
+        /// Filesystem-safe, collision-free name for this series' working directories. Two parts
+        /// of the same source series would otherwise share a processing folder and ZIP path.
+        /// </summary>
+        [JsonIgnore]
+        public string StorageKey => IsSubSeries
+            ? $"{Slug(SeriesInstanceUid)}__{Slug(SubSeriesKey!)}"
+            : Slug(SeriesInstanceUid);
+
+        /// <summary>
+        /// Seed for the anonymised SeriesInstanceUID. Radiopaedia derives a series from the
+        /// (deterministically hashed) SeriesInstanceUID in the uploaded files, so both parts of
+        /// a split series would be merged back together server-side unless they hash differently.
+        /// Null keeps the file's own UID, which is what unsplit series want.
+        /// </summary>
+        [JsonIgnore]
+        public string? SeriesUidSeed => IsSubSeries ? $"{SeriesInstanceUid}::{SubSeriesKey}" : null;
+
+        /// <summary>Label for logs: the series UID plus the split part when there is one.</summary>
+        [JsonIgnore]
+        public string LogName => IsSubSeries
+            ? $"{SeriesInstanceUid} [{SubSeriesLabel ?? SubSeriesKey}]"
+            : SeriesInstanceUid;
+
+        private static string Slug(string value) =>
+            System.Text.RegularExpressions.Regex.Replace(value, "[^A-Za-z0-9._-]", "_");
+
+        /// <summary>
         /// Requested upload method: "dicom" (native DICOM via S3) or "png" (rendered ZIP).
         /// Defaults to "dicom". The pipeline enforces fallback to "png" when redactions are
         /// present or when multiframe culling is detected at runtime.
@@ -201,6 +250,7 @@ namespace RadiopaediaConnect.Models
         public long Id { get; set; }
         public string SeriesInstanceUid { get; set; } = string.Empty;
         public string? SeriesDescription { get; set; }
+        public string? SubSeriesLabel { get; set; }
         public string? Modality { get; set; }
         public int StartFrame { get; set; }
         public int EndFrame { get; set; }

@@ -55,12 +55,33 @@ namespace RadiopaediaConnect.Services.Dicom
             DicomTag.AccessionNumber,         // (0008,0050) SH type-2
             DicomTag.ReferringPhysicianName,  // (0008,0090) PN type-2
             DicomTag.StudyID,                 // (0020,0010) SH type-2
-            DicomTag.Manufacturer,            // (0008,0070) LO type-2
         };
+
+        // ── Tags replaced with the literal string "REMOVED" ─────────────────────────────────
+        // Radiopaedia's enhanced general equipment policy (Policies.ts,
+        // enhancedGeneralEquipmentModulePolicy) replaces these four with ["REMOVED"] rather
+        // than emptying them — in the Enhanced General Equipment Module they are type-1, so an
+        // absent or zero-length value is not conformant.
+        //
+        // Their server-side validator enforces the value exactly, and rejects both an empty
+        // element and a missing one:
+        //   Expected key "00080070" to have value ["REMOVED"], but got undefined
+        private static readonly DicomTag[] _removedReplaceTags =
+        {
+            DicomTag.Manufacturer,            // (0008,0070)
+            DicomTag.ManufacturerModelName,   // (0008,1090)
+            DicomTag.DeviceSerialNumber,      // (0018,1000)
+            DicomTag.SoftwareVersions,        // (0018,1020)
+        };
+
+        private const string RemovedValue = "REMOVED";
 
         /// <summary>The type-2 PHI tags written as empty strings. Exposed so the UI policy endpoint
         /// can describe them from the same source the anonymiser uses.</summary>
         public static IReadOnlyList<DicomTag> EmptyReplaceTags => _emptyReplaceTags;
+
+        /// <summary>The equipment tags written as the literal "REMOVED". Exposed for the same reason.</summary>
+        public static IReadOnlyList<DicomTag> RemovedReplaceTags => _removedReplaceTags;
 
         public DicomAnonymizer(ILogger<DicomAnonymizer> logger, DicomAllowlist allowlist)
         {
@@ -77,9 +98,13 @@ namespace RadiopaediaConnect.Services.Dicom
         /// Anonymises all .dcm files in <paramref name="inputDir"/> and writes them to
         /// <paramref name="outputDir"/>. Returns output paths. A shared <paramref name="uidMap"/>
         /// keeps Study/Series/FrameOfReference UIDs consistent across files in a series.
+        ///
+        /// <paramref name="seriesUidSeed"/> overrides the value hashed into the output
+        /// SeriesInstanceUID. Pass it when uploading one part of a split source series, so the
+        /// parts land as separate series on Radiopaedia instead of being merged back by UID.
         /// </summary>
         public async Task<List<string>> AnonymizeSeriesAsync(
-            string inputDir, string outputDir, DicomUidMap uidMap)
+            string inputDir, string outputDir, DicomUidMap uidMap, string? seriesUidSeed = null)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -97,7 +122,7 @@ namespace RadiopaediaConnect.Services.Dicom
                 try
                 {
                     var source = await DicomFile.OpenAsync(filePath);
-                    var anonFile = AnonymizeFile(source, uidMap);
+                    var anonFile = AnonymizeFile(source, uidMap, seriesUidSeed);
 
                     // InstanceNumber (0020,0013) is preserved by the allowlist; fall back to
                     // the original source value in case the dataset read returns 0.
@@ -141,9 +166,10 @@ namespace RadiopaediaConnect.Services.Dicom
 
         /// <summary>
         /// Anonymises a single <see cref="DicomFile"/> in memory and returns the result.
-        /// The source file is not modified.
+        /// The source file is not modified. See AnonymizeSeriesAsync for
+        /// <paramref name="seriesUidSeed"/>.
         /// </summary>
-        public DicomFile AnonymizeFile(DicomFile source, DicomUidMap uidMap)
+        public DicomFile AnonymizeFile(DicomFile source, DicomUidMap uidMap, string? seriesUidSeed = null)
         {
             var src = source.Dataset;
             var anon = new DicomDataset();
@@ -170,10 +196,17 @@ namespace RadiopaediaConnect.Services.Dicom
             foreach (var tag in _emptyReplaceTags)
                 anon.AddOrUpdate(tag, string.Empty);
 
+            // ── Step 2b: Equipment tags Radiopaedia expects as the literal "REMOVED" ───────
+            // These are written after the allowlist copy, so they overwrite any real value
+            // that reached Step 1 as well as filling in tags the source file never had.
+            foreach (var tag in _removedReplaceTags)
+                anon.AddOrUpdate(tag, RemovedValue);
+
             // ── Step 3: Replace UIDs with consistent synthetic values ─────────────────────
             var origSopUid    = src.GetSingleValueOrDefault(DicomTag.SOPInstanceUID,    DicomUID.Generate().UID);
             var origStudyUid  = src.GetSingleValueOrDefault(DicomTag.StudyInstanceUID,  DicomUID.Generate().UID);
-            var origSeriesUid = src.GetSingleValueOrDefault(DicomTag.SeriesInstanceUID, DicomUID.Generate().UID);
+            var origSeriesUid = seriesUidSeed
+                                ?? src.GetSingleValueOrDefault(DicomTag.SeriesInstanceUID, DicomUID.Generate().UID);
             var origFoRUid    = src.GetSingleValueOrDefault(DicomTag.FrameOfReferenceUID, string.Empty);
             var origSopClass  = src.GetSingleValueOrDefault(DicomTag.SOPClassUID,
                                     DicomUID.SecondaryCaptureImageStorage.UID);

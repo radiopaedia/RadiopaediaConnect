@@ -112,21 +112,28 @@ namespace RadiopaediaConnect.Services
                     foreach (var series in pendingSeries)
                     {
                         _logger.LogInformation("[PIPELINE] Processing Series {SeriesUid} (method: {Method})",
-                            series.SeriesInstanceUid, series.UploadMethod);
+                            series.LogName, series.UploadMethod);
 
                         // Ensure DICOM files are present (C-MOVE if needed)
                         string dicomPath = await EnsureSeriesRetrievedAsync(
                             study.StudyInstanceUid, series.SeriesInstanceUid, study.RemoteNodeName);
 
-                        if (series.RequestsDicom)
+                        // Now that the files are on disk we can see what the series actually
+                        // holds, which the picker could only guess at before retrieval.
+                        var parts = await ExpandSeriesForUploadAsync(dicomPath, series);
+
+                        foreach (var part in parts)
                         {
-                            await ProcessDicomSeriesAsync(
-                                rCaseId, rStudyId, dicomPath, series, username);
-                        }
-                        else
-                        {
-                            await ProcessPngSeriesAsync(
-                                rCaseId, rStudyId, dicomPath, series, username);
+                            if (part.RequestsDicom)
+                            {
+                                await ProcessDicomSeriesAsync(
+                                    rCaseId, rStudyId, dicomPath, part, username);
+                            }
+                            else
+                            {
+                                await ProcessPngSeriesAsync(
+                                    rCaseId, rStudyId, dicomPath, part, username);
+                            }
                         }
 
                         // Non-exception completion (including empty-selection skips) counts
@@ -180,6 +187,85 @@ namespace RadiopaediaConnect.Services
         }
 
         // ──────────────────────────────────────────────────────────────────────────────────
+        // Shared: split a series that turns out to hold several acquisitions
+        // ──────────────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Expands one selected series into the series that should actually be uploaded.
+        ///
+        /// Some PACS store several independent multiframe acquisitions under a single
+        /// SeriesInstanceUID (biplane angio is the usual case), and uploading those as one
+        /// series stitches unrelated runs into a single stack. The picker offers the split up
+        /// front, but only for series the user previewed first — this is the backstop for
+        /// everything else, and it runs against the retrieved files so it cannot be fooled.
+        ///
+        /// A series holding one multiframe instance is left alone: that single file is a
+        /// complete acquisition and uploads as-is.
+        /// </summary>
+        private async Task<List<SubmitCaseSeriesDto>> ExpandSeriesForUploadAsync(
+            string dicomPath, SubmitCaseSeriesDto series)
+        {
+            var asIs = new List<SubmitCaseSeriesDto> { series };
+
+            // Already split in the picker — the user's grouping wins
+            if (series.IsSubSeries) return asIs;
+
+            var fileInfos = await DicomFrameExpander.ScanFilesAsync(
+                Directory.GetFiles(dicomPath, "*.dcm"));
+
+            if (!DicomFrameExpander.CanSplit(fileInfos)) return asIs;
+
+            var subs = DicomFrameExpander.BuildSubSeries(fileInfos);
+
+            _logger.LogWarning(
+                "[PIPELINE] Series {SeriesUid} holds {Count} independent acquisitions under one " +
+                "SeriesInstanceUID — uploading them as {Count} separate series instead of one " +
+                "stitched stack.", series.SeriesInstanceUid, subs.Count);
+
+            var parts = new List<SubmitCaseSeriesDto>();
+
+            foreach (var sub in subs)
+            {
+                // The user's frame window counts positions across the whole series, so it has
+                // to be renumbered for each part.
+                var window = DicomFrameExpander.MapWindowToSubSeries(
+                    fileInfos, sub, series.Start, series.End, series.Step);
+
+                if (window == null)
+                {
+                    _logger.LogInformation(
+                        "[PIPELINE]   part \"{Label}\": outside the selected frame range — skipping.",
+                        sub.Label);
+                    continue;
+                }
+
+                parts.Add(new SubmitCaseSeriesDto
+                {
+                    SeriesInstanceUid = series.SeriesInstanceUid,
+                    SeriesDescription = series.SeriesDescription,
+                    Modality = series.Modality,
+                    SubSeriesKey = sub.Key,
+                    SubSeriesLabel = sub.Label,
+                    SopInstanceUids = sub.SopInstanceUids,
+                    Start = window.Value.Start,
+                    End = window.Value.End,
+                    Step = window.Value.Step,
+                    Redactions = series.Redactions,
+                    UploadMethod = series.UploadMethod,
+                    RowId = series.RowId,
+                    IsUploaded = series.IsUploaded
+                });
+
+                _logger.LogInformation(
+                    "[PIPELINE]   part \"{Label}\": {Frames} frame(s), window {Start}-{End} step {Step}",
+                    sub.Label, sub.FrameCount, window.Value.Start, window.Value.End, window.Value.Step);
+            }
+
+            // Every part fell outside the selection — fall back rather than upload nothing
+            return parts.Count > 0 ? parts : asIs;
+        }
+
+        // ──────────────────────────────────────────────────────────────────────────────────
         // Path A: Native DICOM upload via S3
         // ──────────────────────────────────────────────────────────────────────────────────
 
@@ -187,9 +273,15 @@ namespace RadiopaediaConnect.Services
             string rCaseId, string rStudyId,
             string dicomPath, SubmitCaseSeriesDto series, string username)
         {
+            // Narrow to this series' instances first: when the user split a source series in the
+            // picker, only the selected part is uploaded and the frame window below applies to
+            // that part alone.
+            var fileInfos = DicomFrameExpander.FilterToSubSeries(
+                await DicomFrameExpander.ScanFilesAsync(Directory.GetFiles(dicomPath, "*.dcm")),
+                series.SopInstanceUids);
+            var dcmFiles = fileInfos.Select(f => f.FilePath).ToArray();
+
             // Detect whether any files in this series are multiframe
-            var dcmFiles = Directory.GetFiles(dicomPath, "*.dcm");
-            var fileInfos = await DicomFrameExpander.ScanFilesAsync(dcmFiles);
             bool hasMultiframe = fileInfos.Any(f => f.NumberOfFrames > 1);
 
             // Culling = user selected a subset that isn't "everything"
@@ -202,7 +294,7 @@ namespace RadiopaediaConnect.Services
                 // Fall back to the PNG path automatically.
                 _logger.LogWarning(
                     "[PIPELINE] Series {SeriesUid} has multiframe files with culling — " +
-                    "falling back from DICOM to PNG upload.", series.SeriesInstanceUid);
+                    "falling back from DICOM to PNG upload.", series.LogName);
                 await ProcessPngSeriesAsync(rCaseId, rStudyId, dicomPath, series, username);
                 return;
             }
@@ -235,7 +327,7 @@ namespace RadiopaediaConnect.Services
             if (filesToUpload.Count == 0)
             {
                 _logger.LogWarning("[PIPELINE] Series {SeriesUid}: no files selected after culling — skipping.",
-                    series.SeriesInstanceUid);
+                    series.LogName);
                 return;
             }
 
@@ -243,29 +335,32 @@ namespace RadiopaediaConnect.Services
             // UIDs are replaced using Radiopaedia's own deterministic hashing algorithm
             // (SHA-512 → first two 32-bit signed words → "1.2.826.0.1.3680043.10.341.512.W0.W1")
             // so their server-side validator accepts the files.
-            string anonDir = Path.Combine(_repository.GetProcessingRoot(), series.SeriesInstanceUid, "anon");
+            string anonDir = Path.Combine(_repository.GetProcessingRoot(), series.StorageKey, "anon");
             if (Directory.Exists(anonDir)) Directory.Delete(anonDir, true);
 
             // Stage the selected files into a temp folder so AnonymizeSeriesAsync can glob *.dcm
             var uidMap = new DicomUidMap();
-            var tempInputDir = Path.Combine(_repository.GetProcessingRoot(), series.SeriesInstanceUid, "selected");
+            var tempInputDir = Path.Combine(_repository.GetProcessingRoot(), series.StorageKey, "selected");
             if (Directory.Exists(tempInputDir)) Directory.Delete(tempInputDir, true);
             Directory.CreateDirectory(tempInputDir);
             foreach (var src in filesToUpload)
                 File.Copy(src, Path.Combine(tempInputDir, Path.GetFileName(src)), overwrite: true);
 
-            var anonPaths = await _anonymizer.AnonymizeSeriesAsync(tempInputDir, anonDir, uidMap);
+            // SeriesUidSeed is non-null only for a split series — it keeps the parts from being
+            // merged back into one series by Radiopaedia's UID-based grouping.
+            var anonPaths = await _anonymizer.AnonymizeSeriesAsync(
+                tempInputDir, anonDir, uidMap, series.SeriesUidSeed);
             if (Directory.Exists(tempInputDir)) Directory.Delete(tempInputDir, true);
 
             try
             {
                 if (anonPaths.Count == 0)
-                    throw new Exception($"Anonymisation produced 0 files for Series {series.SeriesInstanceUid} — check logs above.");
+                    throw new Exception($"Anonymisation produced 0 files for Series {series.LogName} — check logs above.");
 
                 _logger.LogInformation("[PIPELINE] Uploading {Count} anonymised DICOM file(s) for Series {SeriesUid}",
-                    anonPaths.Count, series.SeriesInstanceUid);
+                    anonPaths.Count, series.LogName);
                 await _apiClient.UploadDicomSeriesAsync(rCaseId, rStudyId, anonPaths, username);
-                _logger.LogInformation("[PIPELINE] DICOM upload complete for Series {SeriesUid}", series.SeriesInstanceUid);
+                _logger.LogInformation("[PIPELINE] DICOM upload complete for Series {SeriesUid}", series.LogName);
             }
             finally
             {
@@ -281,17 +376,18 @@ namespace RadiopaediaConnect.Services
             string rCaseId, string rStudyId,
             string dicomPath, SubmitCaseSeriesDto series, string username)
         {
-            string outputPath = Path.Combine(_repository.GetProcessingRoot(), series.SeriesInstanceUid);
+            string outputPath = Path.Combine(_repository.GetProcessingRoot(), series.StorageKey);
             if (Directory.Exists(outputPath)) Directory.Delete(outputPath, true);
             Directory.CreateDirectory(outputPath);
 
-            // Build expanded frame list
-            var dicomFiles = Directory.GetFiles(dicomPath, "*.dcm");
-            var fileInfos = await DicomFrameExpander.ScanFilesAsync(dicomFiles);
+            // Build expanded frame list, narrowed to this part when the series was split
+            var fileInfos = DicomFrameExpander.FilterToSubSeries(
+                await DicomFrameExpander.ScanFilesAsync(Directory.GetFiles(dicomPath, "*.dcm")),
+                series.SopInstanceUids);
             var expandedFrames = DicomFrameExpander.ExpandFrames(fileInfos);
 
             _logger.LogInformation("[PIPELINE] Series {SeriesUid}: {Files} files, {Frames} total frames",
-                series.SeriesInstanceUid, dicomFiles.Length, expandedFrames.Count);
+                series.LogName, fileInfos.Count, expandedFrames.Count);
 
             // Apply Start/End/Step
             int skipCount = Math.Max(0, series.Start - 1);
@@ -308,7 +404,7 @@ namespace RadiopaediaConnect.Services
             if (targetFrames.Count == 0)
             {
                 _logger.LogWarning("[PIPELINE] Series {SeriesUid}: 0 frames after filtering — skipping.",
-                    series.SeriesInstanceUid);
+                    series.LogName);
                 return;
             }
 
@@ -327,23 +423,23 @@ namespace RadiopaediaConnect.Services
             }
 
             _logger.LogInformation("[PIPELINE] Series {SeriesUid}: rendered {Count} PNG frame(s)",
-                series.SeriesInstanceUid, targetFrames.Count);
+                series.LogName, targetFrames.Count);
 
             if (Directory.GetFiles(outputPath, "*.png").Length == 0)
             {
-                _logger.LogWarning("[PIPELINE] No PNGs generated for {SeriesUid} — skipping.", series.SeriesInstanceUid);
+                _logger.LogWarning("[PIPELINE] No PNGs generated for {SeriesUid} — skipping.", series.LogName);
                 if (Directory.Exists(outputPath)) Directory.Delete(outputPath, true);
                 return;
             }
 
-            string zipPath = Path.Combine(_repository.GetProcessingRoot(), $"{series.SeriesInstanceUid}.zip");
+            string zipPath = Path.Combine(_repository.GetProcessingRoot(), $"{series.StorageKey}.zip");
             if (File.Exists(zipPath)) File.Delete(zipPath);
 
-            _logger.LogInformation("[PIPELINE] Creating ZIP for Series {SeriesUid}", series.SeriesInstanceUid);
+            _logger.LogInformation("[PIPELINE] Creating ZIP for Series {SeriesUid}", series.LogName);
             ZipFile.CreateFromDirectory(outputPath, zipPath, CompressionLevel.Fastest, false);
 
             _logger.LogInformation("[PIPELINE] Uploading ZIP for Series {SeriesUid} → Study {RStudyId}",
-                series.SeriesInstanceUid, rStudyId);
+                series.LogName, rStudyId);
             await _apiClient.UploadStudyZipAsync(rCaseId, rStudyId, zipPath, username);
 
             if (File.Exists(zipPath)) File.Delete(zipPath);
