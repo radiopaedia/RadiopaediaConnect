@@ -154,7 +154,11 @@ namespace RadiopaediaConnect.Services
                 _logger.LogInformation($"[QueueWorker] Processing Retrieval {job.Id} (Study: {job.StudyInstanceUid})");
 
                 var settings = await _settingsService.GetDicomSettingsAsync();
+                // AE titles are case-sensitive, so prefer an exact match. Fall back to a
+                // case-insensitive match for jobs queued before mixed-case titles were allowed.
                 var remoteNode = settings.RemoteNodes
+                    .FirstOrDefault(n => n.AeTitle.Equals(job.RemoteAeTitle, StringComparison.Ordinal))
+                    ?? settings.RemoteNodes
                     .FirstOrDefault(n => n.AeTitle.Equals(job.RemoteAeTitle, StringComparison.OrdinalIgnoreCase));
 
                 if (remoteNode == null) throw new Exception($"Configured Remote Node '{job.RemoteAeTitle}' not found.");

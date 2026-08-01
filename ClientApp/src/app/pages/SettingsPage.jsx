@@ -394,12 +394,12 @@ const SettingsPage = () => {
                                     <input
                                         type="text"
                                         value={localSettings.storageScpAeTitle}
-                                        onChange={(e) => setLocalSettings((s) => ({ ...s, storageScpAeTitle: e.target.value.toUpperCase() }))}
+                                        onChange={(e) => setLocalSettings((s) => ({ ...s, storageScpAeTitle: e.target.value }))}
                                         className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
                                         maxLength={16}
                                         placeholder="RCONNECT_SCP"
                                     />
-                                    <p className="mt-1 text-xs text-slate-400">Max 16 characters, uppercase. Changing this restarts the SCP.</p>
+                                    <p className="mt-1 text-xs text-slate-400">Max 16 characters. Case-sensitive: enter it exactly as registered on your PACS. Changing this restarts the SCP.</p>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium mb-1">Port</label>
@@ -532,11 +532,12 @@ const SettingsPage = () => {
                                             <input
                                                 type="text"
                                                 value={editingNode.aeTitle}
-                                                onChange={(e) => setEditingNode((n) => ({ ...n, aeTitle: e.target.value.toUpperCase() }))}
+                                                onChange={(e) => setEditingNode((n) => ({ ...n, aeTitle: e.target.value }))}
                                                 className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
                                                 maxLength={16}
                                                 placeholder="PACS_AE"
                                             />
+                                            <p className="mt-1 text-xs text-slate-400">Case-sensitive. Must match the remote node exactly.</p>
                                         </div>
                                         <div>
                                             <label className="block text-sm font-medium mb-1">Host / IP</label>
@@ -562,7 +563,7 @@ const SettingsPage = () => {
                                             <input
                                                 type="text"
                                                 value={editingNode.callingAe}
-                                                onChange={(e) => setEditingNode((n) => ({ ...n, callingAe: e.target.value.toUpperCase() }))}
+                                                onChange={(e) => setEditingNode((n) => ({ ...n, callingAe: e.target.value }))}
                                                 className="w-full rounded-md border border-slate-300 dark:border-slate-600 dark:bg-slate-900 px-3 py-2 text-sm shadow-sm"
                                                 maxLength={16}
                                                 placeholder="RCONNECT_SCU"

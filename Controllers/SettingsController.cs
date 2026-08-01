@@ -167,14 +167,17 @@ namespace RadiopaediaConnect.Controllers
             if (!await AuthorizeAdminAsync()) return Unauthorized(new { message = "Invalid admin password." });
 
             var previousSettings = await _repository.GetLocalSettingsAsync();
-            bool scpChanged = previousSettings.StorageScpAeTitle != request.StorageScpAeTitle;
+
+            // AE titles are case-sensitive; only surrounding whitespace is insignificant.
+            var scpAeTitle = request.StorageScpAeTitle?.Trim() ?? "";
+            bool scpChanged = !string.Equals(previousSettings.StorageScpAeTitle, scpAeTitle, StringComparison.Ordinal);
 
             var newSecret = request.RadiopaediaClientSecret == SecretMask ? previousSettings.RadiopaediaClientSecret : request.RadiopaediaClientSecret;
             var newSmtpPassword = request.SmtpPassword == SecretMask ? previousSettings.SmtpPassword : request.SmtpPassword;
 
             var entity = new LocalSettingsEntity
             {
-                StorageScpAeTitle = request.StorageScpAeTitle,
+                StorageScpAeTitle = scpAeTitle,
                 MaxConcurrentDownloads = request.MaxConcurrentDownloads,
                 RadiopaediaClientId = request.RadiopaediaClientId,
                 RadiopaediaClientSecret = newSecret,
@@ -234,10 +237,10 @@ namespace RadiopaediaConnect.Controllers
             var entity = new RemoteNodeEntity
             {
                 Name = request.Name,
-                AeTitle = request.AeTitle,
+                AeTitle = request.AeTitle?.Trim() ?? "",
                 Host = request.Host,
                 Port = request.Port,
-                CallingAe = request.CallingAe,
+                CallingAe = request.CallingAe?.Trim() ?? "",
                 SortOrder = request.SortOrder
             };
 
@@ -257,10 +260,10 @@ namespace RadiopaediaConnect.Controllers
             if (existing == null) return NotFound(new { message = "Node not found." });
 
             existing.Name = request.Name;
-            existing.AeTitle = request.AeTitle;
+            existing.AeTitle = request.AeTitle?.Trim() ?? "";
             existing.Host = request.Host;
             existing.Port = request.Port;
-            existing.CallingAe = request.CallingAe;
+            existing.CallingAe = request.CallingAe?.Trim() ?? "";
             existing.SortOrder = request.SortOrder;
 
             await _repository.UpdateRemoteNodeAsync(existing);
