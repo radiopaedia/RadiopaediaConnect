@@ -91,16 +91,33 @@ namespace RadiopaediaConnect.Controllers
             var fileInfos = await DicomFrameExpander.ScanFilesAsync(dicomFiles);
             var expandedFrames = DicomFrameExpander.ExpandFrames(fileInfos);
 
+            // Several independent acquisitions can share one SeriesInstanceUID (biplane angio
+            // is the usual culprit). Surface the split so the picker can offer them separately.
+            var subSeries = DicomFrameExpander.BuildSubSeries(fileInfos);
+
             return Ok(new
             {
                 seriesUid,
                 totalFrameCount = expandedFrames.Count,
                 hasMultiframe = fileInfos.Any(f => f.NumberOfFrames > 1),
+                canSplit = subSeries.Count > 1,
+                subSeries = subSeries.Select(s => new
+                {
+                    s.Key,
+                    s.Label,
+                    s.SopInstanceUids,
+                    s.FileNames,
+                    s.FrameCount,
+                    s.HasMultiframe
+                }),
                 files = fileInfos.Select(f => new
                 {
                     f.FileName,
                     f.InstanceNumber,
                     f.NumberOfFrames,
+                    f.SopInstanceUid,
+                    f.ImageType,
+                    f.DetectorId,
                     isMultiframe = f.NumberOfFrames > 1
                 }),
                 expandedFrames = expandedFrames.Select(f => new

@@ -41,7 +41,14 @@ namespace RadiopaediaConnect.Controllers
                 name = DicomDictionary.Default[t]?.Name ?? t.ToString(),
             });
 
-            return Ok(new { keep, zeroed });
+            // Equipment tags overwritten with the literal "REMOVED" rather than emptied
+            var removed = Services.Dicom.DicomAnonymizer.RemovedReplaceTags.Select(t => new
+            {
+                tag = $"({t.Group:X4},{t.Element:X4})",
+                name = DicomDictionary.Default[t]?.Name ?? t.ToString(),
+            });
+
+            return Ok(new { keep, zeroed, removed });
         }
 
         /// <summary>"00181048" → "(0018,1048)".</summary>

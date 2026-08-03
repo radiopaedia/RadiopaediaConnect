@@ -112,6 +112,14 @@ namespace RadiopaediaConnect.Data
             // already-uploaded series from newly appended ones when a case is re-queued.
             EnsureColumnExists(conn, "DraftCaseSeries", "UploadedAt", "TEXT");
 
+            // Sub-series split: several independent acquisitions can share one SeriesInstanceUID
+            // (biplane angio). When the user splits them in the picker each part gets its own row,
+            // identified by SubSeriesKey and carrying the SOP Instance UIDs it owns. NULL/empty
+            // means "the whole series" — the behaviour for every series that was never split.
+            EnsureColumnExists(conn, "DraftCaseSeries", "SubSeriesKey", "TEXT");
+            EnsureColumnExists(conn, "DraftCaseSeries", "SubSeriesLabel", "TEXT");
+            EnsureColumnExists(conn, "DraftCaseSeries", "SopInstanceUidsJson", "TEXT");
+
             // Backfill: series belonging to cases completed before this column existed
             // were all uploaded, so mark them to prevent re-upload on append.
             conn.Execute(@"

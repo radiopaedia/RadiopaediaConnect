@@ -6,8 +6,24 @@ import { clearFileCache } from '../../../lib/csdicomLoader';
 // Modalities where multiframe instances are common — require preview before checkbox selection
 const MULTIFRAME_MODALITIES = new Set(['US', 'XA', 'RF', 'NM', 'PT', 'IVUS', 'SC', 'OT']);
 
+/**
+ * Selection key. A series holding several independent acquisitions (biplane angio being the
+ * usual case) is offered as separate parts, so the key has to distinguish them — the bare
+ * series UID would collide and one part would overwrite the other.
+ */
+const entryKey = (seriesUid, subKey) => (subKey ? `${seriesUid}::${subKey}` : seriesUid);
+
 const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }) => {
-    const [activeSeries, setActiveSeries] = useState(null);
+    // { series, sub } — sub is null for a whole series, or one entry of metadata.subSeries
+    const [activeEntry, setActiveEntry] = useState(null);
+    const activeSeries = activeEntry?.series ?? null;
+    const activeSub = activeEntry?.sub ?? null;
+    const activeKey = activeSeries
+        ? entryKey(activeSeries.seriesInstanceUid, activeSub?.key)
+        : null;
+
+    // Series UIDs the user has chosen to upload as one stack despite being splittable
+    const [mergedSeries, setMergedSeries] = useState(() => new Set());
 
     // Local state for the slice sliders (Subset Logic)
     const [sliceConfig, setSliceConfig] = useState({ start: 1, end: 1, step: 1 });
@@ -42,21 +58,29 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
     // Active series metadata (from the per-series cache)
     const activeMetadata = activeSeries ? seriesMetadataMap[activeSeries.seriesInstanceUid] : null;
 
-    // Use totalFrameCount from metadata when available, fall back to instanceCount
-    const effectiveFrameCount = activeMetadata?.totalFrameCount ?? activeSeries?.instanceCount ?? 0;
+    // A split part carries its own frame count; otherwise use totalFrameCount from
+    // metadata when available, falling back to instanceCount
+    const effectiveFrameCount = activeSub
+        ? activeSub.frameCount
+        : (activeMetadata?.totalFrameCount ?? activeSeries?.instanceCount ?? 0);
+
+    /** Frames belonging to one part of a split series, or all of them when sub is null. */
+    const buildImageIds = (seriesUid, metadata, sub) => {
+        const frames = sub
+            ? metadata.expandedFrames.filter(f => sub.fileNames.includes(f.fileName))
+            : metadata.expandedFrames;
+        return frames.map(f => `csdicom:${seriesUid}|${f.fileName}|${f.frameIndex}`);
+    };
 
     /**
      * Fetches series metadata and builds csdicom: image IDs.
      * Returns { ids, metadata } or null on failure.
      */
-    const fetchMetadataAndBuildImageIds = async (seriesUid) => {
+    const fetchMetadataAndBuildImageIds = async (seriesUid, sub) => {
         const res = await fetch(`/api/cornerstone/series/${seriesUid}/metadata`);
         if (!res.ok) return null;
         const metadata = await res.json();
-        const ids = metadata.expandedFrames.map(f =>
-            `csdicom:${seriesUid}|${f.fileName}|${f.frameIndex}`
-        );
-        return { ids, metadata };
+        return { ids: buildImageIds(seriesUid, metadata, sub), metadata };
     };
 
     useEffect(() => {
@@ -74,7 +98,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         setHasRedactions(false);
         setCurrentFrameIndex(0);
 
-        const savedState = selectedSeriesMap[activeSeries.seriesInstanceUid];
+        const savedState = selectedSeriesMap[activeKey];
 
         if (savedState) {
             setSliceConfig({
@@ -87,7 +111,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         } else {
             setSliceConfig({
                 start: 1,
-                end: activeSeries.instanceCount,
+                end: activeSub ? activeSub.frameCount : activeSeries.instanceCount,
                 step: 1
             });
             setCurrentFrameIndex(0);
@@ -111,7 +135,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                     const result = await response.json();
 
                     if (result.status === 'Ready') {
-                        const data = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid);
+                        const data = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid, activeSub);
                         if (data && isMounted) {
                             setSeriesMetadataMap(prev => ({ ...prev, [activeSeries.seriesInstanceUid]: data.metadata }));
                             setPreviewImageIds(data.ids);
@@ -127,7 +151,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                 }
             } else {
                 try {
-                    const data = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid);
+                    const data = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid, activeSub);
                     if (data && isMounted) {
                         setSeriesMetadataMap(prev => ({ ...prev, [activeSeries.seriesInstanceUid]: data.metadata }));
                         setPreviewImageIds(data.ids);
@@ -144,13 +168,15 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
 
         return () => { isMounted = false; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeSeries]); // Dependency on activeSeries IDENTITY only
+    }, [activeEntry]); // Dependency on activeEntry IDENTITY only
 
     /**
      * When metadata reveals totalFrameCount != instanceCount, auto-update
      * the slice config end value and any saved selection.
      */
     const autoUpdateFrameCount = (metadata, series, savedState) => {
+        // A split part's frame count comes from the part itself, not the series total
+        if (activeSub) return;
         if (!metadata || metadata.totalFrameCount === series.instanceCount) return;
 
         const totalFrames = metadata.totalFrameCount;
@@ -190,12 +216,12 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                     if (data.status === 'Completed') {
                         clearInterval(intervalId);
                         try {
-                            const result = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid);
+                            const result = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid, activeSub);
                             if (!result) throw new Error("Failed to fetch image list");
                             setSeriesMetadataMap(prev => ({ ...prev, [activeSeries.seriesInstanceUid]: result.metadata }));
                             setPreviewImageIds(result.ids);
                             setPreviewJob(prev => ({ ...prev, status: 'ready', serverStatus: 'Completed' }));
-                            const savedState = selectedSeriesMap[activeSeries.seriesInstanceUid];
+                            const savedState = selectedSeriesMap[activeKey];
                             autoUpdateFrameCount(result.metadata, activeSeries, savedState);
                         } catch {
                             setPreviewJob(prev => ({ ...prev, status: 'error', error: "Failed to load images" }));
@@ -211,20 +237,32 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         }
         return () => { if (intervalId) clearInterval(intervalId); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [previewJob.status, previewJob.jobId, activeSeries]);
+    }, [previewJob.status, previewJob.jobId, activeEntry]);
+
+    /**
+     * Identity fields every selection carries, so DashboardPage can build the payload
+     * without having to re-derive which source series (and which part of it) this is.
+     */
+    const entryIdentity = (series, sub) => ({
+        seriesInstanceUid: series.seriesInstanceUid,
+        subseriesKey: sub?.key ?? null,
+        subseriesLabel: sub?.label ?? null,
+        sopInstanceUids: sub?.sopInstanceUids ?? []
+    });
 
     const handleSubsetSave = () => {
         if (!activeSeries) return;
         const count = Math.floor((sliceConfig.end - sliceConfig.start) / sliceConfig.step) + 1;
-        const savedState = selectedSeriesMap[activeSeries.seriesInstanceUid];
+        const savedState = selectedSeriesMap[activeKey];
         const existingRedactions = savedState?.redactions || [];
         // Preserve an existing forced-PNG flag (e.g. from earlier redaction),
         // or add one if this subset configuration makes DICOM unavailable.
         const wasForcedPng = savedState?.uploadMethod === 'png';
 
         onSeriesUpdate(
-            activeSeries.seriesInstanceUid,
+            activeKey,
             {
+                ...entryIdentity(activeSeries, activeSub),
                 ...sliceConfig,
                 total: count,
                 redactions: existingRedactions,
@@ -240,7 +278,7 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         if (isRedacting) {
             if (activeSeries && viewerRef.current) {
                 const newRedactions = viewerRef.current.getRedactionData();
-                const savedState = selectedSeriesMap[activeSeries.seriesInstanceUid];
+                const savedState = selectedSeriesMap[activeKey];
                 const configToUse = savedState
                     ? { start: savedState.start, end: savedState.end, step: savedState.step, total: savedState.total }
                     : {
@@ -251,8 +289,9 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                     };
 
                 onSeriesUpdate(
-                    activeSeries.seriesInstanceUid,
+                    activeKey,
                     {
+                        ...entryIdentity(activeSeries, activeSub),
                         ...configToUse,
                         redactions: newRedactions,
                         uploadMethod: 'png' // redactions always force PNG
@@ -268,21 +307,55 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         }
     };
 
-    const handleCheckboxSelect = (series, isChecked) => {
+    const handleCheckboxSelect = (series, sub, isChecked) => {
+        const key = entryKey(series.seriesInstanceUid, sub?.key);
+
         if (isChecked) {
             const meta = seriesMetadataMap[series.seriesInstanceUid];
-            const trueFrameCount = meta?.totalFrameCount ?? series.instanceCount;
+            const trueFrameCount = sub
+                ? sub.frameCount
+                : (meta?.totalFrameCount ?? series.instanceCount);
             if (trueFrameCount > 100) return;
             shouldAutoPreview.current = false;
-            setActiveSeries(series);
-            onSeriesUpdate(series.seriesInstanceUid, {
+            setActiveEntry({ series, sub: sub ?? null });
+            onSeriesUpdate(key, {
+                ...entryIdentity(series, sub),
                 start: 1, end: trueFrameCount, step: 1, total: trueFrameCount,
                 redactions: []
                 // uploadMethod intentionally omitted — global case-level setting applies
             }, 'select');
         } else {
-            onSeriesUpdate(series.seriesInstanceUid, null, 'deselect');
+            onSeriesUpdate(key, null, 'deselect');
         }
+    };
+
+    /**
+     * Toggles a splittable series between "one stack" and "one stack per acquisition".
+     * Switching invalidates any selection made under the other layout — the parts and the
+     * whole are different uploads — so those entries are dropped.
+     */
+    const handleSplitToggle = (series, meta) => {
+        const uid = series.seriesInstanceUid;
+        const wasMerged = mergedSeries.has(uid);
+
+        if (wasMerged) {
+            // Going back to split: drop the whole-series selection
+            if (selectedSeriesMap[uid]) onSeriesUpdate(uid, null, 'deselect');
+        } else {
+            // Merging: drop each part's selection
+            meta.subSeries.forEach(s => {
+                const key = entryKey(uid, s.key);
+                if (selectedSeriesMap[key]) onSeriesUpdate(key, null, 'deselect');
+            });
+        }
+
+        setMergedSeries(prev => {
+            const next = new Set(prev);
+            if (wasMerged) next.delete(uid); else next.add(uid);
+            return next;
+        });
+
+        if (activeSeries?.seriesInstanceUid === uid) setActiveEntry(null);
     };
 
     const handleConfigChange = (e) => {
@@ -330,12 +403,12 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
 
             if (result.status === 'Ready') {
                 try {
-                    const data = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid);
+                    const data = await fetchMetadataAndBuildImageIds(activeSeries.seriesInstanceUid, activeSub);
                     if (!data) throw new Error("Failed to fetch image list");
                     setSeriesMetadataMap(prev => ({ ...prev, [activeSeries.seriesInstanceUid]: data.metadata }));
                     setPreviewImageIds(data.ids);
                     setPreviewJob({ status: 'ready', serverStatus: 'Ready', jobId: null, error: null });
-                    const savedState = selectedSeriesMap[activeSeries.seriesInstanceUid];
+                    const savedState = selectedSeriesMap[activeKey];
                     autoUpdateFrameCount(data.metadata, activeSeries, savedState);
                 } catch {
                     setPreviewJob({ status: 'error', jobId: null, error: "Failed to load cached images" });
@@ -403,18 +476,21 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         ? Math.floor((sliceConfig.end - sliceConfig.start) / sliceConfig.step) + 1
         : 0;
     const isLocked = previewJob.status === 'loading';
-    const isAlreadySelected = activeSeries && !!selectedSeriesMap[activeSeries.seriesInstanceUid];
+    const isAlreadySelected = activeSeries && !!selectedSeriesMap[activeKey];
     const isSingleImage = effectiveFrameCount <= 1;
 
     // ── Upload method enforcement ────────────────────────────────────────────────────────
     // savedRedactions: whether this series already has redactions committed
     const savedRedactions = activeSeries
-        ? (selectedSeriesMap[activeSeries.seriesInstanceUid]?.redactions ?? [])
+        ? (selectedSeriesMap[activeKey]?.redactions ?? [])
         : [];
     const hasCommittedRedactions = savedRedactions.length > 0;
 
-    // hasMultiframe comes from the metadata cache loaded when the series is previewed
-    const activeHasMultiframe = activeMetadata?.hasMultiframe ?? false;
+    // hasMultiframe comes from the metadata cache loaded when the series is previewed;
+    // for a split part it is that part's own answer
+    const activeHasMultiframe = activeSub
+        ? activeSub.hasMultiframe
+        : (activeMetadata?.hasMultiframe ?? false);
 
     // Is the user culling frames (not the full series)?
     const totalFrameCount = effectiveFrameCount;
@@ -433,14 +509,151 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
     const dicomAvailable = !dicomUnavailableReason;
 
     const hasChanges = activeSeries ? (isAlreadySelected
-        ? (sliceConfig.start !== selectedSeriesMap[activeSeries.seriesInstanceUid].start ||
-            sliceConfig.end !== selectedSeriesMap[activeSeries.seriesInstanceUid].end ||
-            sliceConfig.step !== selectedSeriesMap[activeSeries.seriesInstanceUid].step)
+        ? (sliceConfig.start !== selectedSeriesMap[activeKey].start ||
+            sliceConfig.end !== selectedSeriesMap[activeKey].end ||
+            sliceConfig.step !== selectedSeriesMap[activeKey].step)
         : (sliceConfig.start !== 1 || sliceConfig.end !== effectiveFrameCount || sliceConfig.step !== 1)
     ) : false;
 
     const canSubmitSubset = activeSeries && currentSliceCount > 0 && currentSliceCount <= 100;
     const isSubmitEnabled = canSubmitSubset && !isLocked && hasChanges;
+
+    /**
+     * One selectable row: either a whole series (sub === null) or one part of a split series.
+     */
+    const renderRow = (series, sub, meta) => {
+        const uid = series.seriesInstanceUid;
+        const key = entryKey(uid, sub?.key);
+        const isViewed = activeKey === key;
+        const savedConfig = selectedSeriesMap[key];
+        const isSelected = !!savedConfig;
+
+        const baseCount = sub
+            ? sub.frameCount
+            : (meta?.totalFrameCount ?? series.instanceCount);
+        const finalCount = savedConfig
+            ? Math.floor((savedConfig.end - savedConfig.start) / savedConfig.step) + 1
+            : baseCount;
+
+        // Nothing about a series is certain until its files are on disk — how many frames it
+        // really holds, and whether it is several acquisitions sharing one SeriesInstanceUID.
+        // Split parts are only ever built from loaded metadata, so they are never pending.
+        const notPreviewed = !meta && !sub;
+
+        // For multiframe modalities the frame count can be wildly wrong before previewing
+        // (one image, dozens of frames), so selection is blocked rather than merely hinted at.
+        const needsPreview = notPreviewed && MULTIFRAME_MODALITIES.has(series.modality?.toUpperCase());
+        const tooMany = baseCount > 100;
+        const isDisabled = tooMany || isLocked || needsPreview;
+
+        // Say why the checkbox is unavailable — an inert checkbox with no explanation reads
+        // as a bug, and the fix (click the row to preview) isn't guessable.
+        const blockedReason = needsPreview
+            ? `${series.modality} images can hold many frames each, so the real frame count isn't known yet. Click this series to load it — the checkbox unlocks once it has been previewed.`
+            : tooMany
+                ? `This ${sub ? 'part' : 'series'} has ${baseCount} frames, over the 100-frame limit. Click it and use the timeline to select a smaller range.`
+                : null;
+
+        return (
+            <div
+                onClick={() => {
+                    if (!isLocked) {
+                        shouldAutoPreview.current = true;
+                        setActiveEntry({ series, sub: sub ?? null });
+                    }
+                }}
+                className={`cursor-pointer p-3 hover:bg-white dark:hover:bg-slate-800 transition-colors flex items-start gap-3
+                    ${sub ? 'pl-8' : ''}
+                    ${isViewed ? 'bg-white dark:bg-slate-800 border-l-4 border-indigo-500' : 'border-l-4 border-transparent'}`}
+            >
+                <div className="pt-1" onClick={(e) => e.stopPropagation()}>
+                    <input
+                        type="checkbox"
+                        checked={isSelected}
+                        disabled={isDisabled}
+                        title={blockedReason ?? undefined}
+                        onChange={(e) => handleCheckboxSelect(series, sub, e.target.checked)}
+                        className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-start">
+                        <span className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate pr-2">
+                            {sub ? sub.label : (series.seriesDescription || "No Description")}
+                        </span>
+                    </div>
+                    <div className="flex justify-between items-end mt-1">
+                        <div className="flex items-center gap-2">
+                            {!sub && (
+                                <span className="text-xs bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-300 font-mono">
+                                    {series.modality}
+                                </span>
+                            )}
+                            {/* Multiframe badge (persists once metadata is loaded) */}
+                            {(sub ? sub.hasMultiframe : meta?.hasMultiframe) && (
+                                <span className="text-[10px] bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-bold">
+                                    MULTI
+                                </span>
+                            )}
+                            {/* Blocking: selection is unavailable until the series is loaded */}
+                            {needsPreview && (
+                                <span
+                                    className="text-[10px] bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300 px-1.5 py-0.5 rounded font-bold cursor-help"
+                                    title={blockedReason}
+                                >
+                                    NEEDS PREVIEW FIRST
+                                </span>
+                            )}
+                            {/* Non-blocking: selectable now, but previewing may still change
+                                the frame count or reveal that the series should be split */}
+                            {notPreviewed && !needsPreview && (
+                                <span
+                                    className="text-[10px] bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded font-medium cursor-help"
+                                    title="Not loaded yet. Click this series to preview it and confirm its frame count."
+                                >
+                                    CLICK TO PREVIEW
+                                </span>
+                            )}
+                            {tooMany && !needsPreview && (
+                                <span
+                                    className="text-[10px] bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded font-bold cursor-help"
+                                    title={blockedReason}
+                                >
+                                    OVER 100 FRAMES
+                                </span>
+                            )}
+                        </div>
+                        <span className="text-xs text-slate-500">
+                            {isSelected
+                                ? <span className="font-bold text-green-600">{finalCount}/{baseCount} frames</span>
+                                : (sub || meta
+                                    ? `${baseCount} frames${sub ? '' : ` / ${series.instanceCount} img`}`
+                                    // Frame count is still unknown for these — say so rather than
+                                    // showing an image count the user will read as frames.
+                                    : `${series.instanceCount} img${needsPreview ? ' / ? frames' : ''}`)
+                            }
+                        </span>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    /** "Upload as one series" / "Split back apart" control for a splittable series. */
+    const renderSplitToggle = (series, meta, isMerged) => (
+        <div className="px-3 pb-2 -mt-1 text-right">
+            <button
+                onClick={(e) => { e.stopPropagation(); handleSplitToggle(series, meta); }}
+                disabled={isLocked}
+                className="text-[10px] uppercase tracking-wide text-slate-400 hover:text-indigo-500 disabled:opacity-50"
+                title={isMerged
+                    ? 'This series holds several separate acquisitions — upload them as separate series'
+                    : 'Upload all parts as a single stitched series'}
+            >
+                {isMerged ? '⤢ Split apart' : '⤡ Upload as one series'}
+            </button>
+        </div>
+    );
 
     return (
         <div className="h-[750px] border border-slate-200 dark:border-slate-700 rounded-lg flex overflow-hidden bg-white dark:bg-slate-800">
@@ -455,50 +668,25 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
 
                     <ul className="divide-y divide-slate-200 dark:divide-slate-700">
                         {seriesList.map(series => {
-                            const isViewed = activeSeries?.seriesInstanceUid === series.seriesInstanceUid;
-                            const savedConfig = selectedSeriesMap[series.seriesInstanceUid];
-                            const isSelected = !!savedConfig;
-                            const finalCount = savedConfig
-                                ? Math.floor((savedConfig.end - savedConfig.start) / savedConfig.step) + 1
-                                : series.instanceCount;
+                            const uid = series.seriesInstanceUid;
+                            const meta = seriesMetadataMap[uid];
 
-                            // Per-series metadata from the cache
-                            const meta = seriesMetadataMap[series.seriesInstanceUid];
+                            // Several independent acquisitions under one SeriesInstanceUID —
+                            // offer them separately unless the user asked to merge them back.
+                            const isSplit = !!meta?.canSplit && !mergedSeries.has(uid);
+
+                            if (!isSplit) {
+                                return (
+                                    <li key={uid}>
+                                        {renderRow(series, null, meta)}
+                                        {meta?.canSplit && renderSplitToggle(series, meta, true)}
+                                    </li>
+                                );
+                            }
 
                             return (
-                                <li
-                                    key={series.seriesInstanceUid}
-                                    onClick={() => {
-                                        if (!isLocked) {
-                                            shouldAutoPreview.current = true;
-                                            setActiveSeries(series);
-                                        }
-                                    }}
-                                    className={`cursor-pointer p-3 hover:bg-white dark:hover:bg-slate-800 transition-colors flex items-start gap-3
-                                        ${isViewed ? 'bg-white dark:bg-slate-800 border-l-4 border-indigo-500' : 'border-l-4 border-transparent'}`}
-                                >
-                                    <div className="pt-1" onClick={(e) => e.stopPropagation()}>
-                                        {(() => {
-                                            const trueCount = meta?.totalFrameCount ?? series.instanceCount;
-                                            const needsPreview = !meta && MULTIFRAME_MODALITIES.has(series.modality?.toUpperCase());
-                                            const tooMany = trueCount > 100;
-                                            const isDisabled = tooMany || isLocked || needsPreview;
-                                            const title = needsPreview
-                                                ? 'Preview this series first to determine frame count'
-                                                : tooMany ? `Too many frames (${trueCount} > 100)` : undefined;
-                                            return (
-                                                <input
-                                                    type="checkbox"
-                                                    checked={isSelected}
-                                                    disabled={isDisabled}
-                                                    title={title}
-                                                    onChange={(e) => handleCheckboxSelect(series, e.target.checked)}
-                                                    className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 disabled:opacity-50"
-                                                />
-                                            );
-                                        })()}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
+                                <li key={uid}>
+                                    <div className="px-3 pt-3 pb-1">
                                         <div className="flex justify-between items-start">
                                             <span className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate pr-2">
                                                 {series.seriesDescription || "No Description"}
@@ -509,23 +697,21 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
                                                 <span className="text-xs bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-300 font-mono">
                                                     {series.modality}
                                                 </span>
-                                                {/* Multiframe badge (persists once metadata is loaded) */}
-                                                {meta?.hasMultiframe && (
-                                                    <span className="text-[10px] bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-bold">
-                                                        MULTI
-                                                    </span>
-                                                )}
+                                                <span className="text-[10px] bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded font-bold">
+                                                    SPLIT ×{meta.subSeries.length}
+                                                </span>
                                             </div>
                                             <span className="text-xs text-slate-500">
-                                                {isSelected
-                                                    ? <span className="font-bold text-green-600">{finalCount}/{meta ? meta.totalFrameCount : series.instanceCount} frames</span>
-                                                    : (meta
-                                                        ? `${meta.totalFrameCount} frames / ${series.instanceCount} img`
-                                                        : `${series.instanceCount} img`)
-                                                }
+                                                {meta.totalFrameCount} frames / {series.instanceCount} img
                                             </span>
                                         </div>
                                     </div>
+                                    <ul className="divide-y divide-slate-200/60 dark:divide-slate-700/60">
+                                        {meta.subSeries.map(sub => (
+                                            <li key={sub.key}>{renderRow(series, sub, meta)}</li>
+                                        ))}
+                                    </ul>
+                                    {renderSplitToggle(series, meta, false)}
                                 </li>
                             );
                         })}

@@ -93,6 +93,10 @@ namespace RadiopaediaConnect.Data
                         ? new List<RedactionZoneDto>()
                         : JsonSerializer.Deserialize<List<RedactionZoneDto>>((string)ser.RedactionsJson);
 
+                    var sopUids = string.IsNullOrEmpty((string?)ser.SopInstanceUidsJson)
+                        ? new List<string>()
+                        : JsonSerializer.Deserialize<List<string>>((string)ser.SopInstanceUidsJson);
+
                     studyDto.Series.Add(new SubmitCaseSeriesDto
                     {
                         RowId = (long)ser.Id,
@@ -104,6 +108,9 @@ namespace RadiopaediaConnect.Data
                         Step = (int)ser.StepFrame,
                         Redactions = redactions ?? new List<RedactionZoneDto>(),
                         UploadMethod = (string?)ser.UploadMethod ?? "dicom",
+                        SubSeriesKey = (string?)ser.SubSeriesKey,
+                        SubSeriesLabel = (string?)ser.SubSeriesLabel,
+                        SopInstanceUids = sopUids ?? new List<string>(),
                         IsUploaded = ser.UploadedAt != null
                     });
                 }
@@ -176,10 +183,12 @@ namespace RadiopaediaConnect.Data
                         var sqlSeries = @"
                             INSERT INTO DraftCaseSeries (
                                 DraftCaseStudyId, SeriesInstanceUid, SeriesDescription, Modality,
-                                StartFrame, EndFrame, StepFrame, RedactionsJson, UploadMethod
+                                StartFrame, EndFrame, StepFrame, RedactionsJson, UploadMethod,
+                                SubSeriesKey, SubSeriesLabel, SopInstanceUidsJson
                             ) VALUES (
                                 @StudyId, @SeriesUid, @Desc, @Mod,
-                                @Start, @End, @Step, @Redactions, @UploadMethod
+                                @Start, @End, @Step, @Redactions, @UploadMethod,
+                                @SubKey, @SubLabel, @SopUids
                             )";
 
                         await conn.ExecuteAsync(sqlSeries, new
@@ -192,7 +201,12 @@ namespace RadiopaediaConnect.Data
                             End = series.End,
                             Step = series.Step,
                             Redactions = JsonSerializer.Serialize(series.Redactions),
-                            UploadMethod = series.UploadMethod
+                            UploadMethod = series.UploadMethod,
+                            SubKey = series.SubSeriesKey,
+                            SubLabel = series.SubSeriesLabel,
+                            SopUids = series.SopInstanceUids.Count > 0
+                                ? JsonSerializer.Serialize(series.SopInstanceUids)
+                                : null
                         }, trans);
                     }
                 }
@@ -274,10 +288,12 @@ namespace RadiopaediaConnect.Data
                         await conn.ExecuteAsync(@"
                             INSERT INTO DraftCaseSeries (
                                 DraftCaseStudyId, SeriesInstanceUid, SeriesDescription, Modality,
-                                StartFrame, EndFrame, StepFrame, RedactionsJson, UploadMethod
+                                StartFrame, EndFrame, StepFrame, RedactionsJson, UploadMethod,
+                                SubSeriesKey, SubSeriesLabel, SopInstanceUidsJson
                             ) VALUES (
                                 @StudyId, @SeriesUid, @Desc, @Mod,
-                                @Start, @End, @Step, @Redactions, @UploadMethod
+                                @Start, @End, @Step, @Redactions, @UploadMethod,
+                                @SubKey, @SubLabel, @SopUids
                             )",
                             new
                             {
@@ -289,7 +305,12 @@ namespace RadiopaediaConnect.Data
                                 End = series.End,
                                 Step = series.Step,
                                 Redactions = JsonSerializer.Serialize(series.Redactions),
-                                UploadMethod = series.UploadMethod
+                                UploadMethod = series.UploadMethod,
+                                SubKey = series.SubSeriesKey,
+                                SubLabel = series.SubSeriesLabel,
+                                SopUids = series.SopInstanceUids.Count > 0
+                                    ? JsonSerializer.Serialize(series.SopInstanceUids)
+                                    : null
                             }, trans);
                     }
                 }
@@ -406,7 +427,7 @@ namespace RadiopaediaConnect.Data
                 };
 
                 var sqlSeries = @"
-                    SELECT Id, SeriesInstanceUid, SeriesDescription, Modality,
+                    SELECT Id, SeriesInstanceUid, SeriesDescription, SubSeriesLabel, Modality,
                            StartFrame, EndFrame, StepFrame, RedactionsJson
                     FROM DraftCaseSeries
                     WHERE DraftCaseStudyId = @StudyId";
@@ -439,6 +460,7 @@ namespace RadiopaediaConnect.Data
                         Id = (long)series.Id,
                         SeriesInstanceUid = series.SeriesInstanceUid ?? string.Empty,
                         SeriesDescription = series.SeriesDescription,
+                        SubSeriesLabel = series.SubSeriesLabel,
                         Modality = series.Modality,
                         StartFrame = start,
                         EndFrame = end,
@@ -698,9 +720,9 @@ namespace RadiopaediaConnect.Data
 
                 // Get series for this study
                 var sqlSeries = @"
-                    SELECT Id, SeriesInstanceUid, SeriesDescription, Modality, 
+                    SELECT Id, SeriesInstanceUid, SeriesDescription, SubSeriesLabel, Modality,
                            StartFrame, EndFrame, StepFrame, RedactionsJson
-                    FROM DraftCaseSeries 
+                    FROM DraftCaseSeries
                     WHERE DraftCaseStudyId = @StudyId";
 
                 var seriesRecords = await conn.QueryAsync(sqlSeries, new { StudyId = studyDto.Id });
@@ -734,6 +756,7 @@ namespace RadiopaediaConnect.Data
                         Id = (long)series.Id,
                         SeriesInstanceUid = series.SeriesInstanceUid ?? string.Empty,
                         SeriesDescription = series.SeriesDescription,
+                        SubSeriesLabel = series.SubSeriesLabel,
                         Modality = series.Modality,
                         StartFrame = start,
                         EndFrame = end,

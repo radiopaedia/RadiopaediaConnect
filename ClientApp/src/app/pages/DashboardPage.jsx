@@ -418,7 +418,9 @@ const DashboardPage = ({ user, onLogout }) => {
         }));
     };
 
-    const handleSeriesUpdate = (seriesUid, seriesData, action) => {
+    // entryKey is the series UID, or "<uid>::<part>" when a split series contributes
+    // several independently-configured entries (see SeriesPicker).
+    const handleSeriesUpdate = (entryKey, seriesData, action) => {
         // If selecting the first series for this study, move it to the top
         const currentSelection = draftContent[activeStudyUid]?.seriesSelection || {};
         if (action !== 'deselect' && Object.keys(currentSelection).length === 0) {
@@ -431,9 +433,9 @@ const DashboardPage = ({ user, onLogout }) => {
             let newSeriesState = { ...currentSeriesState };
 
             if (action === 'deselect') {
-                delete newSeriesState[seriesUid];
+                delete newSeriesState[entryKey];
             } else {
-                newSeriesState[seriesUid] = {
+                newSeriesState[entryKey] = {
                     ...seriesData,
                     redactions: seriesData.redactions || []
                 };
@@ -459,12 +461,18 @@ const DashboardPage = ({ user, onLogout }) => {
             .map(study => {
                 const uid = study.studyInstanceUid;
                 const data = draftContent[uid];
-                const seriesPayload = Object.entries(data.seriesSelection).map(([sUid, sData]) => {
+                const seriesPayload = Object.entries(data.seriesSelection).map(([entryKey, sData]) => {
+                    // A split series contributes several entries whose keys are "<uid>::<part>",
+                    // so the source series UID comes from the entry itself, not the key.
+                    const sUid = sData.seriesInstanceUid || entryKey;
                     const originalSeries = loadedSeriesData[uid]?.find(s => s.seriesInstanceUid === sUid);
                     return {
                         seriesinstanceuid: sUid,
                         seriesdescription: originalSeries?.seriesDescription || '',
                         modality: originalSeries?.modality || '',
+                        subseriesKey: sData.subseriesKey ?? null,
+                        subseriesLabel: sData.subseriesLabel ?? null,
+                        sopInstanceUids: sData.sopInstanceUids ?? [],
                         start: sData.start,
                         end: sData.end,
                         step: sData.step,

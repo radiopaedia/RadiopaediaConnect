@@ -73,7 +73,10 @@ export const AnonymisationContent = () => {
                 if (cancelled) return;
                 const groups = buildGroups(data.keep ?? []);
                 setTagGroups(groups);
-                setZeroedTags((data.zeroed ?? []).map(z => ({ ...z, note: 'Present but empty' })));
+                setZeroedTags([
+                    ...(data.zeroed ?? []).map(z => ({ ...z, note: 'Present but empty' })),
+                    ...(data.removed ?? []).map(r => ({ ...r, note: 'Set to "REMOVED"' })),
+                ]);
                 setOpenGroups(groups.map((_, i) => i));
                 setStatus('ready');
             } catch {
@@ -196,12 +199,14 @@ export const AnonymisationContent = () => {
             {/* Zeroed PHI tags */}
             <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
-                    Tags zeroed (present but empty)
+                    Tags overwritten (present, value replaced)
                 </h3>
                 <p className="text-xs text-slate-400 dark:text-slate-500 mb-2 italic">
                     DICOM IOD rules require these tags to exist even when their value is unknown.
-                    Removing them entirely fails strict validators. We write them as empty strings, the same
-                    &ldquo;replace&rdquo; action used by Radiopaedia&apos;s anonymiser.
+                    Removing them entirely fails strict validators, so we apply the same
+                    &ldquo;replace&rdquo; action as Radiopaedia&apos;s anonymiser: most are written as
+                    empty strings, while the equipment tags their policy marks as type-1 are written
+                    as the literal <span className="font-mono">REMOVED</span>.
                 </p>
                 <div className="rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
                     {zeroedTags.map(t => (
