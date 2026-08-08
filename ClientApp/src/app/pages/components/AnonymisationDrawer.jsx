@@ -76,6 +76,8 @@ export const AnonymisationContent = () => {
                 setZeroedTags([
                     ...(data.zeroed ?? []).map(z => ({ ...z, note: 'Present but empty' })),
                     ...(data.removed ?? []).map(r => ({ ...r, note: 'Set to "REMOVED"' })),
+                    // Manufacturer carries its own note — the value depends on the SOP class.
+                    ...(data.conditional ?? []).map(c => ({ tag: c.tag, name: c.name, note: c.note })),
                 ]);
                 setOpenGroups(groups.map((_, i) => i));
                 setStatus('ready');

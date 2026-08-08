@@ -26,8 +26,11 @@ namespace RadiopaediaConnect.Services
             /// <summary>(0008,0008) ImageType. For Siemens biplane the 3rd value is "BIPLANE A"/"BIPLANE B".</summary>
             public string[] ImageType { get; set; } = Array.Empty<string>();
 
-            /// <summary>(0018,700A) DetectorID — one value per physical detector/plane.</summary>
+            /// <summary>(0018,700A) DetectorID, one value per physical detector/plane.</summary>
             public string DetectorId { get; set; } = string.Empty;
+
+            /// <summary>(0008,0060) Modality. Decides whether plane-aware splitting applies.</summary>
+            public string Modality { get; set; } = string.Empty;
         }
 
         public class ExpandedFrame
@@ -83,7 +86,8 @@ namespace RadiopaediaConnect.Services
                         ImageType = dataset.TryGetValues<string>(DicomTag.ImageType, out var it)
                             ? it
                             : Array.Empty<string>(),
-                        DetectorId = dataset.GetSingleValueOrDefault(DicomTag.DetectorID, string.Empty).Trim()
+                        DetectorId = dataset.GetSingleValueOrDefault(DicomTag.DetectorID, string.Empty).Trim(),
+                        Modality = dataset.GetSingleValueOrDefault(DicomTag.Modality, string.Empty).Trim()
                     });
                 }
                 catch
@@ -121,20 +125,37 @@ namespace RadiopaediaConnect.Services
         }
 
         /// <summary>
-        /// Returns true when a series holds more than one multiframe instance — i.e. several
+        /// Modalities where several acquisitions routinely share one SeriesInstanceUID and have to
+        /// be told apart by the detector that produced them rather than by frame count. Biplane
+        /// angiography is the case that matters: both planes land in one series, sometimes as cine
+        /// runs and sometimes as single-frame spot images.
+        /// </summary>
+        private static readonly HashSet<string> PlaneAwareModalities =
+            new(StringComparer.OrdinalIgnoreCase) { "XA", "RF" };
+
+        /// <summary>
+        /// Returns true when a series holds more than one multiframe instance, i.e. several
         /// independent acquisitions ("panes") stored under one SeriesInstanceUID.
         /// </summary>
-        public static bool CanSplit(List<FileInfo> fileInfos) =>
+        private static bool HasMultipleMultiframeInstances(List<FileInfo> fileInfos) =>
             fileInfos.Count(f => f.NumberOfFrames > 1) > 1;
 
         /// <summary>
-        /// Splits a series into independently-uploadable groups: one per multiframe instance,
-        /// plus a single combined group for any single-frame instances. Returns an empty list
-        /// when the series holds at most one multiframe instance (nothing to split).
+        /// Splits a series into independently-uploadable groups. Returns an empty list when there
+        /// is nothing to split.
+        ///
+        /// Two strategies, tried in order. For plane-aware modalities the instances are grouped by
+        /// the plane that produced them; this is the only thing that works when a biplane run is
+        /// stored as single-frame spot images, because such a series holds no multiframe instance
+        /// at all and is invisible to the frame-count test. Everything else is split one group per
+        /// multiframe instance, plus a single combined group for any single-frame instances.
         /// </summary>
         public static List<SubSeries> BuildSubSeries(List<FileInfo> fileInfos)
         {
-            if (!CanSplit(fileInfos)) return new List<SubSeries>();
+            var planes = BuildPlaneSubSeries(fileInfos);
+            if (planes.Count > 1) return planes;
+
+            if (!HasMultipleMultiframeInstances(fileInfos)) return new List<SubSeries>();
 
             var multiframe = fileInfos.Where(f => f.NumberOfFrames > 1).ToList();
             var singleFrame = fileInfos.Where(f => f.NumberOfFrames <= 1).ToList();
@@ -167,6 +188,52 @@ namespace RadiopaediaConnect.Services
             }
 
             return groups;
+        }
+
+        /// <summary>
+        /// Groups every instance by the acquisition plane it came from, for modalities that store
+        /// several planes under one SeriesInstanceUID. ImageType's 3rd value is preferred (Siemens
+        /// writes "BIPLANE A"/"BIPLANE B" there), then DetectorID. Returns an empty list unless the
+        /// series is plane-aware and the chosen tag is present on every instance and resolves to
+        /// at least two distinct planes, so a single-plane series is never split by this path.
+        /// </summary>
+        private static List<SubSeries> BuildPlaneSubSeries(List<FileInfo> fileInfos)
+        {
+            if (fileInfos.Count == 0) return new List<SubSeries>();
+            if (!fileInfos.All(f => PlaneAwareModalities.Contains(f.Modality)))
+                return new List<SubSeries>();
+
+            var byImageType = GroupByPlane(fileInfos, ImageTypeLabel, plane => plane);
+            if (byImageType.Count > 1) return byImageType;
+
+            return GroupByPlane(fileInfos, f => f.DetectorId, plane => $"Detector {plane}");
+        }
+
+        /// <summary>
+        /// Builds one group per distinct value of <paramref name="plane"/>, preserving instance
+        /// order within each group. Returns an empty list when the tag is missing on any instance
+        /// or when every instance resolves to the same plane.
+        /// </summary>
+        private static List<SubSeries> GroupByPlane(
+            List<FileInfo> fileInfos, Func<FileInfo, string> plane, Func<string, string> label)
+        {
+            var nothing = new List<SubSeries>();
+            if (fileInfos.Any(f => string.IsNullOrWhiteSpace(plane(f)))) return nothing;
+
+            var groups = fileInfos
+                .GroupBy(plane, StringComparer.OrdinalIgnoreCase)
+                .Select(g => new SubSeries
+                {
+                    Key = g.Key,
+                    Label = label(g.Key),
+                    SopInstanceUids = g.Select(f => f.SopInstanceUid).ToList(),
+                    FileNames = g.Select(f => f.FileName).ToList(),
+                    FrameCount = g.Sum(f => f.NumberOfFrames),
+                    HasMultiframe = g.Any(f => f.NumberOfFrames > 1)
+                })
+                .ToList();
+
+            return groups.Count > 1 ? groups : nothing;
         }
 
         /// <summary>

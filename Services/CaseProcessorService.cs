@@ -193,14 +193,16 @@ namespace RadiopaediaConnect.Services
         /// <summary>
         /// Expands one selected series into the series that should actually be uploaded.
         ///
-        /// Some PACS store several independent multiframe acquisitions under a single
-        /// SeriesInstanceUID (biplane angio is the usual case), and uploading those as one
-        /// series stitches unrelated runs into a single stack. The picker offers the split up
-        /// front, but only for series the user previewed first — this is the backstop for
-        /// everything else, and it runs against the retrieved files so it cannot be fooled.
+        /// Some PACS store several independent acquisitions under a single SeriesInstanceUID
+        /// (biplane angio is the usual case), and uploading those as one series stitches
+        /// unrelated runs into a single stack. The picker offers the split up front, but only
+        /// for series the user previewed first, so this is the backstop for everything else and
+        /// it runs against the retrieved files so it cannot be fooled.
         ///
-        /// A series holding one multiframe instance is left alone: that single file is a
-        /// complete acquisition and uploads as-is.
+        /// For angiography the split is decided per SOP instance by the plane that produced it,
+        /// which also catches biplane runs stored as single-frame spot images. Elsewhere a series
+        /// holding one multiframe instance is left alone: that single file is a complete
+        /// acquisition and uploads as-is.
         /// </summary>
         private async Task<List<SubmitCaseSeriesDto>> ExpandSeriesForUploadAsync(
             string dicomPath, SubmitCaseSeriesDto series)
@@ -213,13 +215,12 @@ namespace RadiopaediaConnect.Services
             var fileInfos = await DicomFrameExpander.ScanFilesAsync(
                 Directory.GetFiles(dicomPath, "*.dcm"));
 
-            if (!DicomFrameExpander.CanSplit(fileInfos)) return asIs;
-
             var subs = DicomFrameExpander.BuildSubSeries(fileInfos);
+            if (subs.Count < 2) return asIs;
 
             _logger.LogWarning(
                 "[PIPELINE] Series {SeriesUid} holds {Count} independent acquisitions under one " +
-                "SeriesInstanceUID — uploading them as {Count} separate series instead of one " +
+                "SeriesInstanceUID, uploading them as separate series instead of one " +
                 "stitched stack.", series.SeriesInstanceUid, subs.Count);
 
             var parts = new List<SubmitCaseSeriesDto>();

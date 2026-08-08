@@ -48,7 +48,22 @@ namespace RadiopaediaConnect.Controllers
                 name = DicomDictionary.Default[t]?.Name ?? t.ToString(),
             });
 
-            return Ok(new { keep, zeroed, removed });
+            // Manufacturer is emptied or set to "REMOVED" depending on the SOP class — it is
+            // type 2 in the General Equipment module but type 1 in Enhanced General Equipment.
+            var manufacturer = DicomTag.Manufacturer;
+            var conditional = new[]
+            {
+                new
+                {
+                    tag = $"({manufacturer.Group:X4},{manufacturer.Element:X4})",
+                    name = DicomDictionary.Default[manufacturer]?.Name ?? manufacturer.ToString(),
+                    note = "Empty for General Equipment SOP classes (CT, MR, US, DX, XA, NM, PET), "
+                         + "otherwise \"REMOVED\"",
+                    emptyForSopClasses = Services.Dicom.DicomAnonymizer.BlankManufacturerSopClasses,
+                },
+            };
+
+            return Ok(new { keep, zeroed, removed, conditional });
         }
 
         /// <summary>"00181048" → "(0018,1048)".</summary>

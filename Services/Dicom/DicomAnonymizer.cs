@@ -58,20 +58,39 @@ namespace RadiopaediaConnect.Services.Dicom
         };
 
         // ── Tags replaced with the literal string "REMOVED" ─────────────────────────────────
-        // Radiopaedia's enhanced general equipment policy (Policies.ts,
-        // enhancedGeneralEquipmentModulePolicy) replaces these four with ["REMOVED"] rather
-        // than emptying them — in the Enhanced General Equipment Module they are type-1, so an
-        // absent or zero-length value is not conformant.
-        //
-        // Their server-side validator enforces the value exactly, and rejects both an empty
+        // Radiopaedia's server-side validator expects these three to carry the literal value
+        // "REMOVED" on every SOP class (plain CT and MR included), and rejects both an empty
         // element and a missing one:
-        //   Expected key "00080070" to have value ["REMOVED"], but got undefined
+        //   Expected key "00081090" to have value ["REMOVED"], but got undefined
         private static readonly DicomTag[] _removedReplaceTags =
         {
-            DicomTag.Manufacturer,            // (0008,0070)
             DicomTag.ManufacturerModelName,   // (0008,1090)
             DicomTag.DeviceSerialNumber,      // (0018,1000)
             DicomTag.SoftwareVersions,        // (0018,1020)
+        };
+
+        // ── Manufacturer (0008,0070) is conditional on SOP Class UID (0008,0016) ────────────
+        // Radiopaedia's policy follows the DICOM module definitions: Manufacturer is type 2
+        // (may be zero-length) in the General Equipment module, but type 1 (must have a value)
+        // in Enhanced General Equipment. So the SOP classes whose IOD uses plain General
+        // Equipment expect "", and everything else expects "REMOVED" — the enhanced objects
+        // (.2.1, .4.1, .12.1.1, .130), secondary capture (.7), .4.2, .13.1.1, and any SOP
+        // class not listed here.
+        //
+        // Matching is exact, never by prefix: 1.2.840.10008.5.1.4.1.1.12.1 (XA) is blanked,
+        // but its enhanced sibling .12.1.1 is not.
+        private static readonly HashSet<string> _blankManufacturerSopClasses = new(StringComparer.Ordinal)
+        {
+            "1.2.840.10008.5.1.4.1.1.1.1",   // Digital X-Ray Image Storage - For Presentation
+            "1.2.840.10008.5.1.4.1.1.1.2",   // Digital Mammography X-Ray Image Storage - For Presentation
+            "1.2.840.10008.5.1.4.1.1.2",     // CT Image Storage
+            "1.2.840.10008.5.1.4.1.1.3.1",   // Ultrasound Multi-frame Image Storage
+            "1.2.840.10008.5.1.4.1.1.4",     // MR Image Storage
+            "1.2.840.10008.5.1.4.1.1.6.1",   // Ultrasound Image Storage
+            "1.2.840.10008.5.1.4.1.1.12.1",  // X-Ray Angiographic Image Storage
+            "1.2.840.10008.5.1.4.1.1.12.2",  // X-Ray Radiofluoroscopic Image Storage
+            "1.2.840.10008.5.1.4.1.1.20",    // Nuclear Medicine Image Storage
+            "1.2.840.10008.5.1.4.1.1.128",   // Positron Emission Tomography Image Storage
         };
 
         private const string RemovedValue = "REMOVED";
@@ -80,8 +99,23 @@ namespace RadiopaediaConnect.Services.Dicom
         /// can describe them from the same source the anonymiser uses.</summary>
         public static IReadOnlyList<DicomTag> EmptyReplaceTags => _emptyReplaceTags;
 
-        /// <summary>The equipment tags written as the literal "REMOVED". Exposed for the same reason.</summary>
+        /// <summary>The equipment tags written as the literal "REMOVED" regardless of SOP class.
+        /// Exposed for the same reason.</summary>
         public static IReadOnlyList<DicomTag> RemovedReplaceTags => _removedReplaceTags;
+
+        /// <summary>The SOP Class UIDs whose IOD uses the General Equipment module, and so expect
+        /// a zero-length Manufacturer. Exposed for the same reason.</summary>
+        public static IReadOnlyCollection<string> BlankManufacturerSopClasses => _blankManufacturerSopClasses;
+
+        /// <summary>
+        /// The value to write to Manufacturer (0008,0070) for a given SOP Class UID: empty for
+        /// the General Equipment IODs, the literal "REMOVED" for everything else (including an
+        /// unknown or absent SOP class, which is treated as secondary capture).
+        /// </summary>
+        public static string ManufacturerValueFor(string? sopClassUid) =>
+            sopClassUid is not null && _blankManufacturerSopClasses.Contains(sopClassUid)
+                ? string.Empty
+                : RemovedValue;
 
         public DicomAnonymizer(ILogger<DicomAnonymizer> logger, DicomAllowlist allowlist)
         {
@@ -192,15 +226,23 @@ namespace RadiopaediaConnect.Services.Dicom
                 }
             }
 
+            // The SOP class drives Step 2b below as well as the file meta in Step 5, so read it
+            // up front. Trim: some sources pad the UI value, and the lookup is an exact match.
+            var origSopClass = src.GetSingleValueOrDefault(DicomTag.SOPClassUID,
+                                   DicomUID.SecondaryCaptureImageStorage.UID).Trim();
+
             // ── Step 2: Write zeroed-out PHI tags (type-2 — must be present, even if empty) ─
             foreach (var tag in _emptyReplaceTags)
                 anon.AddOrUpdate(tag, string.Empty);
 
-            // ── Step 2b: Equipment tags Radiopaedia expects as the literal "REMOVED" ───────
+            // ── Step 2b: Equipment tags Radiopaedia rewrites rather than removes ───────────
             // These are written after the allowlist copy, so they overwrite any real value
             // that reached Step 1 as well as filling in tags the source file never had.
+            // Manufacturer is the one that varies by SOP class — see ManufacturerValueFor.
             foreach (var tag in _removedReplaceTags)
                 anon.AddOrUpdate(tag, RemovedValue);
+
+            anon.AddOrUpdate(DicomTag.Manufacturer, ManufacturerValueFor(origSopClass));
 
             // ── Step 3: Replace UIDs with consistent synthetic values ─────────────────────
             var origSopUid    = src.GetSingleValueOrDefault(DicomTag.SOPInstanceUID,    DicomUID.Generate().UID);
@@ -208,8 +250,6 @@ namespace RadiopaediaConnect.Services.Dicom
             var origSeriesUid = seriesUidSeed
                                 ?? src.GetSingleValueOrDefault(DicomTag.SeriesInstanceUID, DicomUID.Generate().UID);
             var origFoRUid    = src.GetSingleValueOrDefault(DicomTag.FrameOfReferenceUID, string.Empty);
-            var origSopClass  = src.GetSingleValueOrDefault(DicomTag.SOPClassUID,
-                                    DicomUID.SecondaryCaptureImageStorage.UID);
 
             var hashedSopUid = DicomUidMap.HashedUid(origSopUid);
 
