@@ -147,6 +147,24 @@ const DashboardPage = ({ user, onLogout }) => {
                 alert('Studies can only be added to a case that has completed uploading to Radiopaedia.');
                 return;
             }
+
+            // Radiopaedia only takes new imaging while a case is a draft, so confirm that
+            // before setting up the pickers rather than after the user has done the work.
+            const statusRes = await fetch(`/api/cases/${caseId}/remote-status`);
+            if (statusRes.ok) {
+                const remote = await statusRes.json();
+                if (!remote.acceptsNewImaging) {
+                    alert(remote.remoteStatus === 'deleted'
+                        ? 'This case no longer exists on Radiopaedia, so imaging cannot be added to it.'
+                        : 'This case is no longer a draft on Radiopaedia. Imaging can only be added while a case is still a draft.');
+                    return;
+                }
+            } else {
+                // Could not reach Radiopaedia. Let the user carry on, the server checks
+                // again before anything is uploaded.
+                console.warn('Could not verify the Radiopaedia status of case', caseId);
+            }
+
             if (!detail.patientId) {
                 alert('This case has no patient ID recorded, so its studies cannot be located on PACS.');
                 return;
@@ -539,8 +557,17 @@ const DashboardPage = ({ user, onLogout }) => {
                 setSubmittedCaseId(data.caseId);
                 setShowSuccessModal(true);
             } else {
-                const err = await res.text();
-                alert("Submission failed: " + err);
+                // The append endpoint refuses cases that are no longer drafts on
+                // Radiopaedia and explains why in a JSON message.
+                const raw = await res.text();
+                let message = raw;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed?.message) message = parsed.message;
+                } catch {
+                    // Plain-text error, use it as-is
+                }
+                alert("Submission failed: " + message);
             }
         } catch (e) {
             console.error(e);

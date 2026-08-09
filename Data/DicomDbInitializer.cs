@@ -102,6 +102,13 @@ namespace RadiopaediaConnect.Data
             EnsureColumnExists(conn, "DraftCases", "PatientId", "TEXT");
             EnsureColumnExists(conn, "DraftCases", "PatientDob", "TEXT");
 
+            // Remote (Radiopaedia-side) state of the case, refreshed by reconciling against
+            // GET /api/v1/cases. RemoteStatus is "draft", "pending_review", "published" or
+            // "deleted" (our own value for a case ID that is no longer in the user's listing).
+            EnsureColumnExists(conn, "DraftCases", "RemoteStatus", "TEXT");
+            EnsureColumnExists(conn, "DraftCases", "RemoteVisibility", "TEXT");
+            EnsureColumnExists(conn, "DraftCases", "RemoteCheckedAt", "TEXT");
+
             // Upload method per series: "dicom" (native DICOM via S3) or "png" (rendered ZIP)
             EnsureColumnExists(conn, "DraftCaseSeries", "UploadMethod", "TEXT NOT NULL DEFAULT 'dicom'");
 

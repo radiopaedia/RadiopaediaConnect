@@ -41,6 +41,14 @@ const STATUS_CONFIG = {
     }
 };
 
+// State of the case on Radiopaedia itself, from the case listing API
+const REMOTE_STATUS_LABELS = {
+    draft: 'Draft',
+    pending_review: 'Awaiting editorial review',
+    published: 'Published',
+    deleted: 'No longer on Radiopaedia'
+};
+
 // System ID to name mapping
 const SYSTEM_MAP = {
     1: "Breast", 2: "Vascular", 3: "Central Nervous System", 4: "Chest",
@@ -333,6 +341,19 @@ const CaseDetailDrawer = ({ isOpen, onClose, caseId, adminMode = false, zIndex =
                                                         <span className="text-slate-500 dark:text-slate-400">Created:</span>
                                                         <span className="ml-2 text-slate-900 dark:text-white">{formatDate(caseDetail.createdAt)}</span>
                                                     </div>
+                                                    {caseDetail.remoteStatus && (
+                                                        <div className="col-span-2">
+                                                            <span className="text-slate-500 dark:text-slate-400">On Radiopaedia:</span>
+                                                            <span className={`ml-2 font-medium ${caseDetail.remoteStatus === 'deleted' ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-white'}`}>
+                                                                {REMOTE_STATUS_LABELS[caseDetail.remoteStatus] || caseDetail.remoteStatus}
+                                                            </span>
+                                                            {caseDetail.remoteCheckedAt && (
+                                                                <span className="ml-2 text-xs text-slate-400">
+                                                                    (checked {formatDate(caseDetail.remoteCheckedAt)})
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                     {caseDetail.radiopaediaCaseId && (
                                                         <div className="col-span-2">
                                                             <span className="text-slate-500 dark:text-slate-400">Radiopaedia Case ID:</span>

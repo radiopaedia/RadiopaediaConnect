@@ -18,6 +18,7 @@ namespace RadiopaediaConnect.Services
         private readonly RadiopaediaApiClient _apiClient;
         private readonly DicomAnonymizer _anonymizer;
         private readonly INotificationService _notificationService;
+        private readonly CaseReconciliationService _reconciliation;
         private readonly ILogger<CaseProcessorService> _logger;
 
         public CaseProcessorService(
@@ -26,6 +27,7 @@ namespace RadiopaediaConnect.Services
             RadiopaediaApiClient apiClient,
             DicomAnonymizer anonymizer,
             INotificationService notificationService,
+            CaseReconciliationService reconciliation,
             ILogger<CaseProcessorService> logger)
         {
             _dicomScu = dicomScu;
@@ -33,6 +35,7 @@ namespace RadiopaediaConnect.Services
             _apiClient = apiClient;
             _anonymizer = anonymizer;
             _notificationService = notificationService;
+            _reconciliation = reconciliation;
             _logger = logger;
 
             var processingRoot = _repository.GetProcessingRoot();
@@ -64,6 +67,13 @@ namespace RadiopaediaConnect.Services
                 if (!string.IsNullOrEmpty(draftEntity?.RadiopaediaCaseId))
                 {
                     rCaseId = draftEntity.RadiopaediaCaseId;
+
+                    // Radiopaedia only accepts new imaging while a case is a draft, and the
+                    // case may have been published or deleted since this job was queued. The
+                    // controller checks too, but this is the last point before we upload.
+                    await _reconciliation.EnsureAcceptsNewImagingAsync(
+                        username, rCaseId, caseId, forceRefresh: true);
+
                     _logger.LogInformation("[PIPELINE] Appending to existing Radiopaedia Case {RCaseId}", rCaseId);
                     await _repository.UpdateCaseStatusAsync(caseId, "Processing", rCaseId);
                 }
@@ -72,6 +82,11 @@ namespace RadiopaediaConnect.Services
                     rCaseId = await _apiClient.CreateCaseAsync(draftEntity, username);
                     _logger.LogInformation("[PIPELINE] Case Created! Radiopaedia ID: {RCaseId}", rCaseId);
                     await _repository.UpdateCaseStatusAsync(caseId, "Processing", rCaseId);
+
+                    // The new case will not be in the cached listing yet.
+                    _reconciliation.InvalidateCache(username);
+                    await _repository.UpdateRemoteCaseStateAsync(
+                        caseId, RadiopaediaCaseStatus.Draft, null, DateTime.UtcNow);
                 }
 
                 foreach (var study in fullCase.Studies)
@@ -145,6 +160,15 @@ namespace RadiopaediaConnect.Services
                 await _apiClient.MarkUploadFinishedAsync(rCaseId, username);
                 await _repository.UpdateCaseStatusAsync(caseId, "Completed", rCaseId);
                 _logger.LogInformation("[PIPELINE] SUCCESS! Case {RCaseId} completed.", rCaseId);
+            }
+            catch (CaseNotEditableException ex)
+            {
+                // Expected outcome, not a fault: the case was published or removed on
+                // Radiopaedia after this upload was queued. Fail the case with a message the
+                // user can act on and skip the stack-trace notification.
+                _logger.LogWarning("[PIPELINE] Case {CaseId} cannot accept imaging: {Message}", caseId, ex.Message);
+                await _repository.UpdateCaseStatusAsync(caseId, "Failed", rCaseId, ex.Message);
+                throw;
             }
             catch (Exception ex)
             {

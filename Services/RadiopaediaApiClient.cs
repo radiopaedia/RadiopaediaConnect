@@ -374,6 +374,77 @@ namespace RadiopaediaConnect.Services
             return doc.RootElement.Clone();
         }
 
+        /// <summary>
+        /// Lists every case belonging to the authenticated user.
+        /// See: https://radiopaedia.org/api-documentation#listing-cases
+        ///
+        /// The endpoint returns a bare JSON array and pages with an opaque cursor carried
+        /// in the X-Next-Cursor response header, so we follow it until it comes back empty.
+        /// </summary>
+        public async Task<List<RadiopaediaCaseSummary>> ListCasesAsync(
+            string username, CancellationToken cancellationToken = default)
+        {
+            var token = await _authService.GetValidAccessTokenAsync(username);
+            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            const int PerPage = 100;      // the documented maximum
+            const int MaxPages = 200;     // stop runaway paging if a cursor ever repeats
+
+            var cases = new List<RadiopaediaCaseSummary>();
+            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+            string? cursor = null;
+            int page = 0;
+
+            var sw = Stopwatch.StartNew();
+
+            while (page < MaxPages)
+            {
+                page++;
+
+                var url = $"cases?per_page={PerPage}";
+                if (!string.IsNullOrEmpty(cursor))
+                    url += $"&cursor={Uri.EscapeDataString(cursor)}";
+
+                var response = await _httpClient.GetAsync(url, cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if ((int)response.StatusCode == 429)
+                    _logger.LogWarning("[API] Rate limited (429) by Radiopaedia on ListCases");
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("[API] List cases failed (page {Page}): {Status} - {Body}",
+                        page, (int)response.StatusCode, body);
+                    throw new HttpRequestException(
+                        $"Radiopaedia API error listing cases: {(int)response.StatusCode} {response.ReasonPhrase}");
+                }
+
+                var pageItems = JsonSerializer.Deserialize<List<RadiopaediaCaseSummary>>(body)
+                                ?? new List<RadiopaediaCaseSummary>();
+                cases.AddRange(pageItems);
+
+                cursor = response.Headers.TryGetValues("X-Next-Cursor", out var cursorValues)
+                    ? cursorValues.FirstOrDefault()
+                    : null;
+
+                if (string.IsNullOrEmpty(cursor) || pageItems.Count == 0)
+                    break;
+
+                if (!seenCursors.Add(cursor))
+                {
+                    _logger.LogWarning("[API] List cases returned a repeated cursor, stopping after {Count} case(s)",
+                        cases.Count);
+                    break;
+                }
+            }
+
+            sw.Stop();
+            _logger.LogInformation("[API] Listed {Count} case(s) for {Username} over {Pages} page(s) in {Ms}ms",
+                cases.Count, username, page, sw.ElapsedMilliseconds);
+
+            return cases;
+        }
+
         public async Task<UserQuotaDto?> GetUserQuotaAsync(string username)
         {
             var token = await _authService.GetValidAccessTokenAsync(username);

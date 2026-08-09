@@ -25,6 +25,31 @@ const STATUS_CONFIG = {
     },
 };
 
+// State of the case on Radiopaedia itself, from the case listing API. "deleted" is our own
+// marker for a case ID that is no longer in the user's listing. Only drafts accept new imaging.
+const REMOTE_STATUS_CONFIG = {
+    draft: {
+        color: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:border-slate-600',
+        label: 'Draft',
+        hint: 'Still a draft on Radiopaedia, so imaging can be added.',
+    },
+    pending_review: {
+        color: 'bg-purple-100 text-purple-800 border-purple-200',
+        label: 'In review',
+        hint: 'Submitted for editorial review. Imaging can no longer be added.',
+    },
+    published: {
+        color: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+        label: 'Published',
+        hint: 'Published on Radiopaedia. Imaging can no longer be added.',
+    },
+    deleted: {
+        color: 'bg-red-100 text-red-800 border-red-200',
+        label: 'Deleted on Radiopaedia',
+        hint: 'This case was not found in your Radiopaedia case list. It has most likely been deleted there.',
+    },
+};
+
 const formatDate = (dateString, dateOnly = false) => {
     if (!dateString) return '';
     const options = dateOnly
@@ -46,6 +71,7 @@ const formatDate = (dateString, dateOnly = false) => {
  *   actions        – optional ReactNode rendered after the Refresh button (e.g. "Add New Case")
  *   loadingMessage – override the loading text
  *   onAddToCase    – optional (caseObj) => void; shows an "Add imaging" action on completed cases
+ *                    that are still drafts on Radiopaedia (or whose remote status is unknown)
  */
 const CasesTable = ({
     cases,
@@ -244,6 +270,10 @@ const CasesTable = ({
                                 {filteredCases.map(c => {
                                     const cfg = STATUS_CONFIG[c.status] ?? STATUS_CONFIG.Queued;
                                     const hasLink = c.status === 'Completed' && c.radiopaediaCaseId;
+                                    const remoteCfg = REMOTE_STATUS_CONFIG[c.remoteStatus];
+                                    // Cases that have never been reconciled keep the button —
+                                    // the server rechecks with Radiopaedia before anything uploads.
+                                    const canAddImaging = hasLink && (!c.remoteStatus || c.remoteStatus === 'draft');
                                     return (
                                         <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                                             {showUserColumn && (
@@ -277,6 +307,18 @@ const CasesTable = ({
                                                     {cfg.icon}
                                                     {cfg.label}
                                                 </span>
+                                                {remoteCfg && (
+                                                    <div className="mt-1">
+                                                        <span
+                                                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${remoteCfg.color}`}
+                                                            title={c.remoteCheckedAt
+                                                                ? `${remoteCfg.hint} Last checked ${formatDate(c.remoteCheckedAt)}.`
+                                                                : remoteCfg.hint}
+                                                        >
+                                                            {remoteCfg.label}
+                                                        </span>
+                                                    </div>
+                                                )}
                                                 {c.errorMessage && (
                                                     <div className="text-xs text-red-500 mt-1 truncate max-w-0 min-w-full" title={c.errorMessage}>
                                                         {c.errorMessage}
@@ -301,7 +343,7 @@ const CasesTable = ({
                                                             Radiopaedia
                                                         </a>
                                                     )}
-                                                    {onAddToCase && hasLink && (
+                                                    {onAddToCase && canAddImaging && (
                                                         <button
                                                             onClick={() => onAddToCase(c)}
                                                             className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors"

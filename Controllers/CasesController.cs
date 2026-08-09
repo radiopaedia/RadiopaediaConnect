@@ -17,8 +17,9 @@ namespace RadiopaediaConnect.Controllers
         private readonly CaseProcessorService _caseProcessor;
         private readonly AdminSessionService _sessionService;
         private readonly RadiopaediaApiClient _radiopaediaApiClient;
+        private readonly CaseReconciliationService _reconciliation;
 
-        public CasesController(DicomRepository repository, AppLogsRepository logsRepository, ILogger<CasesController> logger, CaseProcessorService caseProcessor, AdminSessionService sessionService, RadiopaediaApiClient radiopaediaApiClient)
+        public CasesController(DicomRepository repository, AppLogsRepository logsRepository, ILogger<CasesController> logger, CaseProcessorService caseProcessor, AdminSessionService sessionService, RadiopaediaApiClient radiopaediaApiClient, CaseReconciliationService reconciliation)
         {
             _repository = repository;
             _logsRepository = logsRepository;
@@ -26,6 +27,7 @@ namespace RadiopaediaConnect.Controllers
             _caseProcessor = caseProcessor;
             _sessionService = sessionService;
             _radiopaediaApiClient = radiopaediaApiClient;
+            _reconciliation = reconciliation;
         }
 
         /// <summary>
@@ -227,6 +229,81 @@ namespace RadiopaediaConnect.Controllers
         }
 
         /// <summary>
+        /// Reconciles this user's uploaded cases against their Radiopaedia case listing,
+        /// recording which are still drafts, which have been published and which no longer
+        /// exist. Returns the refreshed case list so the caller does not need a second call.
+        /// </summary>
+        [HttpPost("reconcile")]
+        public async Task<IActionResult> ReconcileCases(CancellationToken cancellationToken)
+        {
+            var username = User.FindFirst("urn:radiopaedia:username")?.Value;
+
+            if (string.IsNullOrEmpty(username))
+            {
+                return Unauthorized("User session invalid. Please log in again.");
+            }
+
+            try
+            {
+                var summary = await _reconciliation.ReconcileUserAsync(username, cancellationToken);
+                var cases = await _repository.GetUserCasesAsync(username);
+
+                return Ok(new { summary, cases });
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "Reconciliation failed for {Username}", username);
+                return StatusCode(502, new { message = "Could not reach Radiopaedia to check your cases." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Reconciliation failed for {Username}", username);
+                return StatusCode(500, new { message = "Failed to reconcile cases with Radiopaedia." });
+            }
+        }
+
+        /// <summary>
+        /// The live Radiopaedia status of a single case, used to decide whether the
+        /// "add imaging" flow can be entered.
+        /// </summary>
+        [HttpGet("{caseId:guid}/remote-status")]
+        public async Task<IActionResult> GetRemoteStatus(Guid caseId, CancellationToken cancellationToken)
+        {
+            var username = User.FindFirst("urn:radiopaedia:username")?.Value;
+
+            if (string.IsNullOrEmpty(username))
+            {
+                return Unauthorized("User session invalid. Please log in again.");
+            }
+
+            var draft = await _repository.GetDraftCaseAsync(caseId);
+            if (draft == null || !string.Equals(draft.Username, username, StringComparison.OrdinalIgnoreCase))
+                return NotFound("Case not found.");
+
+            if (string.IsNullOrEmpty(draft.RadiopaediaCaseId))
+                return Ok(new { remoteStatus = (string?)null, acceptsNewImaging = false });
+
+            try
+            {
+                var status = await _reconciliation.GetRemoteStatusAsync(
+                    username, draft.RadiopaediaCaseId, caseId, forceRefresh: false,
+                    cancellationToken: cancellationToken);
+
+                return Ok(new
+                {
+                    remoteStatus = status,
+                    acceptsNewImaging = RadiopaediaCaseStatus.AcceptsNewImaging(status),
+                    radiopaediaCaseId = draft.RadiopaediaCaseId
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to read Radiopaedia status for case {CaseId}", caseId);
+                return StatusCode(502, new { message = "Could not check the case status with Radiopaedia." });
+            }
+        }
+
+        /// <summary>
         /// Append studies/series to an existing, already-uploaded case.
         /// Studies matching an existing StudyInstanceUid on the case have their series
         /// added to that study on Radiopaedia; new UIDs become new studies.
@@ -250,6 +327,27 @@ namespace RadiopaediaConnect.Controllers
 
             if (draft.Status != "Completed" || string.IsNullOrEmpty(draft.RadiopaediaCaseId))
                 return BadRequest("Studies can only be added to a case that has completed uploading to Radiopaedia.");
+
+            // Radiopaedia rejects new imaging once a case leaves draft, so check with them
+            // before queueing anything. The pipeline repeats this check before it uploads.
+            try
+            {
+                await _reconciliation.EnsureAcceptsNewImagingAsync(
+                    username, draft.RadiopaediaCaseId, caseId, forceRefresh: true);
+            }
+            catch (CaseNotEditableException ex)
+            {
+                _logger.LogInformation("Append to case {CaseId} refused: {Message}", caseId, ex.Message);
+                return Conflict(new { message = ex.Message, remoteStatus = ex.RemoteStatus });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Could not verify the Radiopaedia status of case {CaseId}", caseId);
+                return StatusCode(502, new
+                {
+                    message = "Could not check the case status with Radiopaedia. Please try again shortly."
+                });
+            }
 
             try
             {

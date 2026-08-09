@@ -96,6 +96,9 @@ namespace RadiopaediaConnect
             builder.Services.AddScoped<CaseProcessorService>();
             builder.Services.AddHostedService<DicomQueueWorker>();
             builder.Services.AddHttpClient<RadiopaediaApiClient>();
+            // Singleton so the short-lived case listing cache is shared by the controllers
+            // and the upload pipeline. It resolves the API client from a scope per call.
+            builder.Services.AddSingleton<CaseReconciliationService>();
 
             var app = builder.Build();
 

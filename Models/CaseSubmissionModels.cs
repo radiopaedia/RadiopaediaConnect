@@ -186,6 +186,11 @@ namespace RadiopaediaConnect.Models
         public string? PatientName { get; set; }
         public string? PatientId { get; set; }
         public DateTime? PatientDob { get; set; }
+
+        // Radiopaedia-side state, refreshed by CaseReconciliationService
+        public string? RemoteStatus { get; set; }
+        public string? RemoteVisibility { get; set; }
+        public DateTime? RemoteCheckedAt { get; set; }
     }
 
     public class CaseListItemDto
@@ -204,6 +209,11 @@ namespace RadiopaediaConnect.Models
         public string? PatientName { get; set; }
         public string? PatientId { get; set; }
         public DateTime? PatientDob { get; set; }
+
+        // Radiopaedia-side state, refreshed by CaseReconciliationService
+        public string? RemoteStatus { get; set; }
+        public string? RemoteVisibility { get; set; }
+        public DateTime? RemoteCheckedAt { get; set; }
     }
 
     public class AdminCaseListItemDto : CaseListItemDto
@@ -230,6 +240,11 @@ namespace RadiopaediaConnect.Models
         public string? PatientName { get; set; }
         public string? PatientId { get; set; }
         public DateTime? PatientDob { get; set; }
+
+        // Radiopaedia-side state, refreshed by CaseReconciliationService
+        public string? RemoteStatus { get; set; }
+        public string? RemoteVisibility { get; set; }
+        public DateTime? RemoteCheckedAt { get; set; }
 
         public List<CaseDetailStudyDto> Studies { get; set; } = new();
     }

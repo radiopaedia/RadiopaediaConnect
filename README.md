@@ -21,6 +21,8 @@ Radiopaedia is built by the radiology community, and we want to make contributin
 - Reduce image number: easily trim large stacks or select to upload only every second or third image
 - Fast: uploading cases using RadiopaediaConnect is much faster than using the browser, allowing you to collect cases while reporting
 - Draft submission: cases are submitted as drafts, giving you full control before publishing
+- Case sync: My Cases checks your Radiopaedia case list, so you can see which of your uploads are still drafts, which have been published, and which no longer exist on Radiopaedia
+- Safe additions: extra imaging can only be added to a case while it is still a draft, checked with Radiopaedia before anything is uploaded
 
 ## Getting Started
 

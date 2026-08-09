@@ -371,7 +371,8 @@ namespace RadiopaediaConnect.Data
                 SELECT
                     Id, Title, Presentation, Age, Sex, Status,
                     CreatedAt, RadiopaediaCaseId, ErrorMessage,
-                    PatientName, PatientId, PatientDob
+                    PatientName, PatientId, PatientDob,
+                    RemoteStatus, RemoteVisibility, RemoteCheckedAt
                 FROM DraftCases
                 WHERE Username = @Username
                 ORDER BY CreatedAt DESC";
@@ -386,7 +387,8 @@ namespace RadiopaediaConnect.Data
                 SELECT
                     Id, Username, Title, Presentation, Age, Sex, Status,
                     CreatedAt, RadiopaediaCaseId, ErrorMessage,
-                    PatientName, PatientId, PatientDob
+                    PatientName, PatientId, PatientDob,
+                    RemoteStatus, RemoteVisibility, RemoteCheckedAt
                 FROM DraftCases
                 ORDER BY CreatedAt DESC";
 
@@ -400,7 +402,8 @@ namespace RadiopaediaConnect.Data
             var sqlCase = @"
                 SELECT Id, Title, Presentation, System, Age, Sex, DiagnosticCertainty,
                        CaseDiscussion, Status, CreatedAt, RadiopaediaCaseId, ErrorMessage,
-                       PatientName, PatientId, PatientDob
+                       PatientName, PatientId, PatientDob,
+                       RemoteStatus, RemoteVisibility, RemoteCheckedAt
                 FROM DraftCases
                 WHERE Id = @Id";
 
@@ -492,6 +495,47 @@ namespace RadiopaediaConnect.Data
                 ORDER BY CreatedAt DESC";
 
             return await conn.QueryAsync<CaseListItemDto>(sql, new { PatientId = patientId });
+        }
+
+        /// <summary>
+        /// Every case belonging to a user that has made it as far as having a Radiopaedia ID.
+        /// These are the rows worth reconciling against the user's case listing.
+        /// </summary>
+        public async Task<IEnumerable<RemoteCaseState>> GetUploadedCaseIdsAsync(string username)
+        {
+            using var conn = GetConnection();
+            var sql = @"
+                SELECT Id AS CaseId, RadiopaediaCaseId, RemoteStatus, RemoteVisibility, RemoteCheckedAt
+                FROM DraftCases
+                WHERE Username = @Username
+                  AND RadiopaediaCaseId IS NOT NULL
+                  AND TRIM(RadiopaediaCaseId) <> ''";
+
+            return await conn.QueryAsync<RemoteCaseState>(sql, new { Username = username });
+        }
+
+        /// <summary>
+        /// Records what the Radiopaedia case listing said about a case. A null status means
+        /// the case was not in the listing at all, which we store as "deleted".
+        /// </summary>
+        public async Task UpdateRemoteCaseStateAsync(
+            Guid caseId, string? remoteStatus, string? remoteVisibility, DateTime checkedAtUtc)
+        {
+            using var conn = GetConnection();
+            var sql = @"
+                UPDATE DraftCases
+                SET RemoteStatus = @RemoteStatus,
+                    RemoteVisibility = @RemoteVisibility,
+                    RemoteCheckedAt = @CheckedAt
+                WHERE Id = @Id";
+
+            await conn.ExecuteAsync(sql, new
+            {
+                Id = caseId,
+                RemoteStatus = remoteStatus,
+                RemoteVisibility = remoteVisibility,
+                CheckedAt = checkedAtUtc
+            });
         }
 
         public async Task UpdateCaseStatusAsync(Guid caseId, string status, string? radiopaediaCaseId = null, string? errorMessage = null)
@@ -689,10 +733,11 @@ namespace RadiopaediaConnect.Data
 
             // Get the main case record with username validation
             var sqlCase = @"
-                SELECT Id, Title, Presentation, System, Age, Sex, DiagnosticCertainty, 
+                SELECT Id, Title, Presentation, System, Age, Sex, DiagnosticCertainty,
                        CaseDiscussion, Status, CreatedAt, RadiopaediaCaseId, ErrorMessage,
-                       PatientName, PatientId, PatientDob
-                FROM DraftCases 
+                       PatientName, PatientId, PatientDob,
+                       RemoteStatus, RemoteVisibility, RemoteCheckedAt
+                FROM DraftCases
                 WHERE Id = @Id AND Username = @Username";
 
             var draft = await conn.QueryFirstOrDefaultAsync<CaseDetailDto>(sqlCase, new { Id = caseId, Username = username });
