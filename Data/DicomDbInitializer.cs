@@ -153,6 +153,36 @@ namespace RadiopaediaConnect.Data
 
             conn.Execute(createAppLogsSql);
             EnsureColumnExists(conn, "AppLogs", "CaseId", "TEXT");
+
+            FailOrphanedJobs(conn);
+        }
+
+        /// <summary>
+        /// Marks any job still flagged as running at startup as failed. Nothing survives a
+        /// process restart, so such a row is always a leftover. Left alone they would hold a
+        /// slot in the concurrency budget forever, and now that a running upload blocks further
+        /// uploads for the same case, one leftover would stop that case being uploaded again.
+        ///
+        /// They are failed rather than requeued so a half-finished upload is never silently
+        /// repeated: the case shows as failed and the user decides whether to retry.
+        /// </summary>
+        private static void FailOrphanedJobs(SqliteConnection conn)
+        {
+            const string sql = @"
+                UPDATE DicomJobs
+                SET Status = @Failed,
+                    ErrorMessage = COALESCE(ErrorMessage, 'Interrupted by a service restart.'),
+                    CompletedAt = @Now
+                WHERE Status = @InProgress";
+
+            int affected = conn.Execute(sql, new
+            {
+                Failed = JobStatus.Failed,
+                InProgress = JobStatus.InProgress,
+                Now = DateTime.UtcNow
+            });
+            if (affected > 0)
+                Console.WriteLine($"[DB] Failed {affected} job(s) left running by a previous process.");
         }
 
         private static void EnsureColumnExists(SqliteConnection conn, string tableName, string columnName, string columnDef)

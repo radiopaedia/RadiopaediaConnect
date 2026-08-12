@@ -125,6 +125,27 @@ namespace RadiopaediaConnect.Services
         }
 
         /// <summary>
+        /// Applies the user's frame window to an expanded frame list. Start and End are 1-based
+        /// and inclusive, Step counts from the first selected frame.
+        ///
+        /// Shared by the DICOM and PNG upload paths so a series contains exactly the same frames
+        /// whichever way it is sent.
+        /// </summary>
+        public static List<ExpandedFrame> ApplyWindow(
+            List<ExpandedFrame> frames, int start, int end, int step)
+        {
+            int skipCount = Math.Max(0, start - 1);
+            int takeCount = Math.Max(0, end - start + 1);
+
+            var selected = frames.Skip(skipCount).Take(takeCount).ToList();
+
+            if (step > 1)
+                selected = selected.Where((_, i) => i % step == 0).ToList();
+
+            return selected;
+        }
+
+        /// <summary>
         /// Modalities where several acquisitions routinely share one SeriesInstanceUID and have to
         /// be told apart by the detector that produced them rather than by frame count. Biplane
         /// angiography is the case that matters: both planes land in one series, sometimes as cine

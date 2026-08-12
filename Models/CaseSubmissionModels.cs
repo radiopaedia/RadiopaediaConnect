@@ -132,15 +132,16 @@ namespace RadiopaediaConnect.Models
         /// <summary>
         /// Requested upload method: "dicom" (native DICOM via S3) or "png" (rendered ZIP).
         /// Defaults to "dicom". The pipeline enforces fallback to "png" when redactions are
-        /// present or when multiframe culling is detected at runtime.
+        /// present, and at runtime when a multiframe run turns out to be a video stream whose
+        /// frames cannot be separated.
         /// </summary>
         [JsonPropertyName("uploadMethod")]
         public string UploadMethod { get; set; } = "dicom";
 
         /// <summary>
         /// Returns true when native DICOM upload is eligible.
-        /// Redactions always force PNG. Multiframe + culling is checked separately in
-        /// the pipeline once the actual files are scanned.
+        /// Redactions always force PNG. Whether a multiframe run can be split into one
+        /// instance per frame is decided in the pipeline, once the files are on disk.
         /// </summary>
         [System.Text.Json.Serialization.JsonIgnore]
         public bool RequestsDicom => UploadMethod == "dicom" && !Redactions.Any();

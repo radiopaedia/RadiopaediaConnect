@@ -363,6 +363,15 @@ namespace RadiopaediaConnect.Controllers
                     Message = "Additional studies queued for upload."
                 });
             }
+            catch (DuplicateUploadJobException)
+            {
+                // Expected when a submission is sent more than once, not a fault.
+                _logger.LogInformation("Append to case {CaseId} refused: an upload is already queued.", caseId);
+                return Conflict(new
+                {
+                    message = "This case already has an upload in progress. Wait for it to finish before adding more studies."
+                });
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to append to case {CaseId}.", caseId);

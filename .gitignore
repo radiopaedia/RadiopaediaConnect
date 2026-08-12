@@ -371,3 +371,7 @@ FodyWeavers.xsd
 /ClientApp/.yarn/
 /CLAUDE.md
 /nul
+
+# Deployment is workstation-specific and carries credentials, keep it local
+/deploy.cmd
+/deploy.local.cmd

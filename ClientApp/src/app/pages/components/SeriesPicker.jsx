@@ -486,24 +486,11 @@ const SeriesPicker = ({ seriesList, selectedSeriesMap, onSeriesUpdate, loading }
         : [];
     const hasCommittedRedactions = savedRedactions.length > 0;
 
-    // hasMultiframe comes from the metadata cache loaded when the series is previewed;
-    // for a split part it is that part's own answer
-    const activeHasMultiframe = activeSub
-        ? activeSub.hasMultiframe
-        : (activeMetadata?.hasMultiframe ?? false);
-
-    // Is the user culling frames (not the full series)?
-    const totalFrameCount = effectiveFrameCount;
-    const isCulling = activeSeries
-        ? (sliceConfig.start > 1 || sliceConfig.end < totalFrameCount || sliceConfig.step > 1)
-        : false;
-
-    // DICOM is not available if:
-    //   1. Redactions have been committed (PHI could be in pixel data)
-    //   2. Multiframe series + culling (partial frame extraction is not supported)
+    // DICOM is not available once redactions have been committed, because raw DICOM would
+    // carry the original pixels. Multiframe series are fine either way: the pipeline splits
+    // them into one instance per frame, so any frame window can be sent as DICOM.
     const dicomUnavailableReason =
         hasCommittedRedactions ? 'Redactions applied — raw DICOM would bypass pixel-level PHI removal' :
-        (activeHasMultiframe && isCulling) ? 'Multiframe series with frame culling — cannot extract partial frames from DICOM' :
         null;
 
     const dicomAvailable = !dicomUnavailableReason;

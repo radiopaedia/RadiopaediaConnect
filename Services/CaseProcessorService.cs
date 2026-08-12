@@ -53,6 +53,10 @@ namespace RadiopaediaConnect.Services
 
             string? rCaseId = null;
 
+            // Every scratch folder for this run lives under the case, so two cases holding the
+            // same series can never stage into the same place.
+            string caseWorkRoot = Path.Combine(_repository.GetProcessingRoot(), caseId.ToString("N"));
+
             try
             {
                 var fullCase = await _repository.GetFullDraftCaseAsync(caseId);
@@ -142,12 +146,12 @@ namespace RadiopaediaConnect.Services
                             if (part.RequestsDicom)
                             {
                                 await ProcessDicomSeriesAsync(
-                                    rCaseId, rStudyId, dicomPath, part, username);
+                                    rCaseId, rStudyId, dicomPath, part, username, caseWorkRoot);
                             }
                             else
                             {
                                 await ProcessPngSeriesAsync(
-                                    rCaseId, rStudyId, dicomPath, part, username);
+                                    rCaseId, rStudyId, dicomPath, part, username, caseWorkRoot);
                             }
                         }
 
@@ -178,6 +182,19 @@ namespace RadiopaediaConnect.Services
                     $"Pipeline failed: Case {caseId}",
                     $"Case ID: {caseId}\nRadiopaedia Case ID: {rCaseId ?? "not created"}\nError: {ex.Message}\n\n{ex.StackTrace}");
                 throw;
+            }
+            finally
+            {
+                // Scratch files are worthless once the run ends, either way.
+                try
+                {
+                    if (Directory.Exists(caseWorkRoot)) Directory.Delete(caseWorkRoot, true);
+                }
+                catch (Exception cleanupEx)
+                {
+                    _logger.LogWarning("[PIPELINE] Could not clear {Path}: {Message}",
+                        caseWorkRoot, cleanupEx.Message);
+                }
             }
         }
 
@@ -294,9 +311,15 @@ namespace RadiopaediaConnect.Services
         // Path A: Native DICOM upload via S3
         // ──────────────────────────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Uploads a series as native DICOM. Multiframe instances are broken into one instance
+        /// per frame first: Radiopaedia builds a stack of one image per uploaded file and does
+        /// not expand multiframe files, so a cine run sent whole shows only its first frame.
+        /// A run whose frames cannot be lifted out falls back to the PNG path.
+        /// </summary>
         private async Task ProcessDicomSeriesAsync(
             string rCaseId, string rStudyId,
-            string dicomPath, SubmitCaseSeriesDto series, string username)
+            string dicomPath, SubmitCaseSeriesDto series, string username, string caseWorkRoot)
         {
             // Narrow to this series' instances first: when the user split a source series in the
             // picker, only the selected part is uploaded and the frame window below applies to
@@ -304,72 +327,84 @@ namespace RadiopaediaConnect.Services
             var fileInfos = DicomFrameExpander.FilterToSubSeries(
                 await DicomFrameExpander.ScanFilesAsync(Directory.GetFiles(dicomPath, "*.dcm")),
                 series.SopInstanceUids);
-            var dcmFiles = fileInfos.Select(f => f.FilePath).ToArray();
 
-            // Detect whether any files in this series are multiframe
-            bool hasMultiframe = fileInfos.Any(f => f.NumberOfFrames > 1);
+            var selectedFrames = DicomFrameExpander.ApplyWindow(
+                DicomFrameExpander.ExpandFrames(fileInfos), series.Start, series.End, series.Step);
 
-            // Culling = user selected a subset that isn't "everything"
-            int totalFrames = DicomFrameExpander.ExpandFrames(fileInfos).Count;
-            bool isCulled = series.Start > 1 || series.End < totalFrames || series.Step > 1;
-
-            if (hasMultiframe && isCulled)
+            if (selectedFrames.Count == 0)
             {
-                // Cannot safely extract a partial frame range from a multiframe DICOM file.
-                // Fall back to the PNG path automatically.
-                _logger.LogWarning(
-                    "[PIPELINE] Series {SeriesUid} has multiframe files with culling — " +
-                    "falling back from DICOM to PNG upload.", series.LogName);
-                await ProcessPngSeriesAsync(rCaseId, rStudyId, dicomPath, series, username);
-                return;
-            }
-
-            // Determine which files to upload based on the frame selection.
-            // For single-frame series, each .dcm file == one frame, so we can simply
-            // skip files outside the Start/End/Step window.
-            List<string> filesToUpload;
-            if (isCulled)
-            {
-                var expandedFrames = DicomFrameExpander.ExpandFrames(fileInfos);
-                int skipCount = Math.Max(0, series.Start - 1);
-                int takeCount = Math.Max(0, series.End - series.Start + 1);
-
-                var selectedFiles = expandedFrames
-                    .Skip(skipCount)
-                    .Take(takeCount)
-                    .Where((f, i) => series.Step <= 1 || i % series.Step == 0)
-                    .Select(f => f.FilePath)
-                    .Distinct()
-                    .ToList();
-
-                filesToUpload = selectedFiles;
-            }
-            else
-            {
-                filesToUpload = dcmFiles.ToList();
-            }
-
-            if (filesToUpload.Count == 0)
-            {
-                _logger.LogWarning("[PIPELINE] Series {SeriesUid}: no files selected after culling — skipping.",
+                _logger.LogWarning("[PIPELINE] Series {SeriesUid}: no frames selected after culling, skipping.",
                     series.LogName);
                 return;
             }
+
+            // Only the instances the selection actually reaches matter here: a window that
+            // lands entirely on single-frame images needs no splitting even if the part also
+            // holds a cine run.
+            var selectedPaths = selectedFrames
+                .Select(f => f.FilePath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            bool hasMultiframe = fileInfos.Any(f => f.NumberOfFrames > 1 && selectedPaths.Contains(f.FilePath));
 
             // ── Anonymise: SHA-512 UIDs + allowlist copy, then upload ────────────────────
             // UIDs are replaced using Radiopaedia's own deterministic hashing algorithm
             // (SHA-512 → first two 32-bit signed words → "1.2.826.0.1.3680043.10.341.512.W0.W1")
             // so their server-side validator accepts the files.
-            string anonDir = Path.Combine(_repository.GetProcessingRoot(), series.StorageKey, "anon");
+            string anonDir = Path.Combine(caseWorkRoot, series.StorageKey, "anon");
             if (Directory.Exists(anonDir)) Directory.Delete(anonDir, true);
 
-            // Stage the selected files into a temp folder so AnonymizeSeriesAsync can glob *.dcm
+            // Stage the selected frames into a temp folder so AnonymizeSeriesAsync can glob *.dcm
             var uidMap = new DicomUidMap();
-            var tempInputDir = Path.Combine(_repository.GetProcessingRoot(), series.StorageKey, "selected");
+            var tempInputDir = Path.Combine(caseWorkRoot, series.StorageKey, "selected");
             if (Directory.Exists(tempInputDir)) Directory.Delete(tempInputDir, true);
             Directory.CreateDirectory(tempInputDir);
-            foreach (var src in filesToUpload)
-                File.Copy(src, Path.Combine(tempInputDir, Path.GetFileName(src)), overwrite: true);
+
+            // How many files the upload is expected to carry. Checked against the anonymiser's
+            // output below so a series can never go up with some of its frames missing.
+            int stagedCount;
+
+            if (hasMultiframe)
+            {
+                // Radiopaedia counts one uploaded file as one image in the stack and never
+                // expands a multiframe instance, so a cine run has to be broken into one
+                // instance per frame or only the first frame of each file is ever seen.
+                try
+                {
+                    stagedCount = (await DicomFrameSplitter.StageFramesAsync(selectedFrames, tempInputDir)).Count;
+                    _logger.LogInformation(
+                        "[PIPELINE] Series {SeriesUid}: split {Frames} frame(s) out of {Files} source instance(s)",
+                        series.LogName, selectedFrames.Count, selectedPaths.Count);
+                }
+                catch (FrameSplitNotSupportedException ex)
+                {
+                    // Expected for the odd acquisition, not a fault. Nothing is lost by
+                    // rendering instead, so the run still goes up in full.
+                    _logger.LogWarning(
+                        "[PIPELINE] Series {SeriesUid}: {Reason}. Falling back from DICOM to PNG upload.",
+                        series.LogName, ex.Message);
+                    if (Directory.Exists(tempInputDir)) Directory.Delete(tempInputDir, true);
+                    await ProcessPngSeriesAsync(rCaseId, rStudyId, dicomPath, series, username, caseWorkRoot);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "[PIPELINE] Series {SeriesUid}: splitting the multiframe instances failed. " +
+                        "Falling back from DICOM to PNG upload.", series.LogName);
+                    if (Directory.Exists(tempInputDir)) Directory.Delete(tempInputDir, true);
+                    await ProcessPngSeriesAsync(rCaseId, rStudyId, dicomPath, series, username, caseWorkRoot);
+                    return;
+                }
+            }
+            else
+            {
+                // Single-frame instances: one .dcm is one frame, so the selected frames name
+                // the files to send and the originals go up untouched.
+                foreach (var src in selectedPaths)
+                    File.Copy(src, Path.Combine(tempInputDir, Path.GetFileName(src)), overwrite: true);
+
+                stagedCount = selectedPaths.Count;
+            }
 
             // SeriesUidSeed is non-null only for a split series — it keeps the parts from being
             // merged back into one series by Radiopaedia's UID-based grouping.
@@ -379,8 +414,14 @@ namespace RadiopaediaConnect.Services
 
             try
             {
-                if (anonPaths.Count == 0)
-                    throw new Exception($"Anonymisation produced 0 files for Series {series.LogName} — check logs above.");
+                // The anonymiser skips files it cannot read and carries on, so a short result
+                // means frames went missing between staging and anonymisation. Uploading anyway
+                // would put a partial series on Radiopaedia and report it as a success.
+                if (anonPaths.Count != stagedCount)
+                    throw new Exception(
+                        $"Anonymisation produced {anonPaths.Count} file(s) for Series {series.LogName} " +
+                        $"but {stagedCount} were staged. Refusing to upload a partial series; check the " +
+                        $"[Anon] Skipped warnings above.");
 
                 _logger.LogInformation("[PIPELINE] Uploading {Count} anonymised DICOM file(s) for Series {SeriesUid}",
                     anonPaths.Count, series.LogName);
@@ -399,9 +440,9 @@ namespace RadiopaediaConnect.Services
 
         private async Task ProcessPngSeriesAsync(
             string rCaseId, string rStudyId,
-            string dicomPath, SubmitCaseSeriesDto series, string username)
+            string dicomPath, SubmitCaseSeriesDto series, string username, string caseWorkRoot)
         {
-            string outputPath = Path.Combine(_repository.GetProcessingRoot(), series.StorageKey);
+            string outputPath = Path.Combine(caseWorkRoot, series.StorageKey, "png");
             if (Directory.Exists(outputPath)) Directory.Delete(outputPath, true);
             Directory.CreateDirectory(outputPath);
 
@@ -415,16 +456,8 @@ namespace RadiopaediaConnect.Services
                 series.LogName, fileInfos.Count, expandedFrames.Count);
 
             // Apply Start/End/Step
-            int skipCount = Math.Max(0, series.Start - 1);
-            int takeCount = Math.Max(0, series.End - series.Start + 1);
-
-            var targetFrames = expandedFrames
-                .Skip(skipCount)
-                .Take(takeCount)
-                .ToList();
-
-            if (series.Step > 1)
-                targetFrames = targetFrames.Where((x, i) => i % series.Step == 0).ToList();
+            var targetFrames = DicomFrameExpander.ApplyWindow(
+                expandedFrames, series.Start, series.End, series.Step);
 
             if (targetFrames.Count == 0)
             {
@@ -457,7 +490,7 @@ namespace RadiopaediaConnect.Services
                 return;
             }
 
-            string zipPath = Path.Combine(_repository.GetProcessingRoot(), $"{series.StorageKey}.zip");
+            string zipPath = Path.Combine(caseWorkRoot, $"{series.StorageKey}.zip");
             if (File.Exists(zipPath)) File.Delete(zipPath);
 
             _logger.LogInformation("[PIPELINE] Creating ZIP for Series {SeriesUid}", series.LogName);
@@ -514,12 +547,8 @@ namespace RadiopaediaConnect.Services
             _logger.LogInformation("[Processor] Series {SeriesUid}: {Files} files, {Frames} total frames",
                 seriesDto.SeriesInstanceUid, dicomFiles.Length, expandedFrames.Count);
 
-            int skipCount = Math.Max(0, seriesDto.Start - 1);
-            int takeCount = Math.Max(0, seriesDto.End - seriesDto.Start + 1);
-
-            var targetFrames = expandedFrames.Skip(skipCount).Take(takeCount).ToList();
-            if (seriesDto.Step > 1)
-                targetFrames = targetFrames.Where((x, i) => i % seriesDto.Step == 0).ToList();
+            var targetFrames = DicomFrameExpander.ApplyWindow(
+                expandedFrames, seriesDto.Start, seriesDto.End, seriesDto.Step);
 
             for (int i = 0; i < targetFrames.Count; i++)
             {

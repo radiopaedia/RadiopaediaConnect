@@ -257,6 +257,25 @@ namespace RadiopaediaConnect.Data
 
             try
             {
+                // Refuse to queue a second upload for a case that already has one waiting or
+                // running. Duplicate submissions arrive together when a user clicks the button
+                // more than once, and the resulting jobs fight over the same processing folders.
+                var activeUploads = await conn.ExecuteScalarAsync<int>(@"
+                    SELECT COUNT(1) FROM DicomJobs
+                    WHERE Type = @Upload
+                      AND ResourceId = @CaseId
+                      AND Status IN (@Pending, @InProgress)",
+                    new
+                    {
+                        Upload = JobType.Upload,
+                        CaseId = caseId,
+                        Pending = JobStatus.Pending,
+                        InProgress = JobStatus.InProgress
+                    }, trans);
+
+                if (activeUploads > 0)
+                    throw new DuplicateUploadJobException(caseId);
+
                 foreach (var study in studies)
                 {
                     var studyId = await conn.ExecuteScalarAsync<long?>(
@@ -590,13 +609,29 @@ namespace RadiopaediaConnect.Data
 
             try
             {
+                // An Upload job is left pending while another Upload job for the same case is
+                // still running. Two jobs for one case share the same processing folders and
+                // would delete each other's staged files mid-upload, which has already caused
+                // a series to be uploaded with only part of its frames.
                 var sqlFind = @"
-                    SELECT * FROM DicomJobs 
-                    WHERE Status = @Pending 
-                    ORDER BY Priority ASC, CreatedAt ASC 
+                    SELECT * FROM DicomJobs AS j
+                    WHERE j.Status = @Pending
+                      AND (
+                          j.Type <> @Upload
+                          OR NOT EXISTS (
+                              SELECT 1 FROM DicomJobs AS running
+                              WHERE running.Status = @InProgress
+                                AND running.Type = @Upload
+                                AND running.ResourceId = j.ResourceId
+                          )
+                      )
+                    ORDER BY j.Priority ASC, j.CreatedAt ASC
                     LIMIT 1";
 
-                var job = await conn.QueryFirstOrDefaultAsync<DicomJob>(sqlFind, new { Pending = JobStatus.Pending }, trans);
+                var job = await conn.QueryFirstOrDefaultAsync<DicomJob>(
+                    sqlFind,
+                    new { Pending = JobStatus.Pending, InProgress = JobStatus.InProgress, Upload = JobType.Upload },
+                    trans);
 
                 if (job != null)
                 {
@@ -815,6 +850,21 @@ namespace RadiopaediaConnect.Data
             }
 
             return draft;
+        }
+    }
+
+    /// <summary>
+    /// Thrown when an upload is queued for a case that already has one pending or running.
+    /// The caller should tell the user to wait rather than treating this as a fault.
+    /// </summary>
+    public class DuplicateUploadJobException : Exception
+    {
+        public Guid CaseId { get; }
+
+        public DuplicateUploadJobException(Guid caseId)
+            : base($"Case {caseId} already has an upload queued or in progress.")
+        {
+            CaseId = caseId;
         }
     }
 }

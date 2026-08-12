@@ -63,6 +63,12 @@ const DashboardPage = ({ user, onLogout }) => {
     const [showSuccessModal, setShowSuccessModal] = useState(false);
     const [submittedCaseId, setSubmittedCaseId] = useState(null);
 
+    // True from the moment a submission leaves the browser until the server answers.
+    // The append endpoint checks the case with Radiopaedia first, so the request can take
+    // seconds; without this the button stays live and a second click queues a second upload.
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const submitInFlight = useRef(false);
+
     // Global upload format for this case — 'dicom' (native, anonymised) or 'png' (pixel-only).
     // Individual series may still be forced to 'png' by constraints (redactions, multiframe culling).
     const [uploadMethod, setUploadMethod] = useState('dicom');
@@ -558,7 +564,8 @@ const DashboardPage = ({ user, onLogout }) => {
                 setShowSuccessModal(true);
             } else {
                 // The append endpoint refuses cases that are no longer drafts on
-                // Radiopaedia and explains why in a JSON message.
+                // Radiopaedia, and cases that already have an upload running, and
+                // explains why in a JSON message.
                 const raw = await res.text();
                 let message = raw;
                 try {
@@ -591,6 +598,10 @@ const DashboardPage = ({ user, onLogout }) => {
     };
 
     const handleSubmit = async () => {
+        // The ref, not the state, is what actually blocks a double click: state updates are
+        // batched and a second click can land before React has re-rendered the disabled button.
+        if (submitInFlight.current) return;
+
         if (!validateForm()) {
             alert("Please correct the errors in the Case Details section.");
             return;
@@ -603,7 +614,14 @@ const DashboardPage = ({ user, onLogout }) => {
             return;
         }
 
-        await submitCaseToServer(payload);
+        submitInFlight.current = true;
+        setIsSubmitting(true);
+        try {
+            await submitCaseToServer(payload);
+        } finally {
+            submitInFlight.current = false;
+            setIsSubmitting(false);
+        }
     };
 
     const handleDuplicateWarningClose = () => {
@@ -942,8 +960,12 @@ const DashboardPage = ({ user, onLogout }) => {
                                                 </p>
                                                 <ul className="text-xs text-slate-500 dark:text-slate-400 list-disc list-inside space-y-0.5 ml-1">
                                                     <li>Series with image redactions (pixel manipulation requires PNG conversion)</li>
-                                                    <li>Multiframe series (single file / many frames) where only a subset of frames is selected; partial frame extraction from multiframe DICOM is not supported</li>
+                                                    <li>Cine runs stored as a video stream (MPEG / H.264), where individual frames cannot be separated out</li>
                                                 </ul>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400">
+                                                    Multiframe series are split into one DICOM image per frame before upload, because
+                                                    Radiopaedia shows only the first frame of a multiframe file.
+                                                </p>
                                                 <p className="text-xs text-slate-500 dark:text-slate-400 italic">
                                                     Note: DICOM uploads take a little longer for Radiopaedia to process before images become viewable. Please allow a few minutes after a successful upload.
                                                 </p>
@@ -1020,15 +1042,27 @@ const DashboardPage = ({ user, onLogout }) => {
                         <div className="flex justify-end gap-4 pt-4 pb-12">
                             <button
                                 onClick={handleDiscard}
-                                className="px-6 py-4 bg-slate-200 text-slate-700 text-lg font-medium rounded shadow hover:bg-slate-300 transition-all"
+                                disabled={isSubmitting}
+                                className="px-6 py-4 bg-slate-200 text-slate-700 text-lg font-medium rounded shadow hover:bg-slate-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 Discard
                             </button>
                             <button
                                 onClick={handleSubmit}
-                                className="px-8 py-4 bg-indigo-600 text-white text-lg font-bold rounded shadow-xl hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-500/50 transition-all transform hover:-translate-y-0.5"
+                                disabled={isSubmitting}
+                                className="px-8 py-4 bg-indigo-600 text-white text-lg font-bold rounded shadow-xl hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-500/50 transition-all transform hover:-translate-y-0.5 disabled:bg-indigo-400 disabled:cursor-not-allowed disabled:shadow-none disabled:transform-none disabled:hover:translate-y-0"
                             >
-                                {appendTarget ? 'Upload Additional Studies to Case' : 'Upload Anonymised Draft Case'}
+                                {isSubmitting ? (
+                                    <span className="inline-flex items-center gap-2">
+                                        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                                        </svg>
+                                        Submitting...
+                                    </span>
+                                ) : (
+                                    appendTarget ? 'Upload Additional Studies to Case' : 'Upload Anonymised Draft Case'
+                                )}
                             </button>
                         </div>
                     </div>
