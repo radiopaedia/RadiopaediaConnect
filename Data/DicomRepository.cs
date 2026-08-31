@@ -368,6 +368,96 @@ namespace RadiopaediaConnect.Data
             }
         }
 
+        /// <summary>
+        /// Re-queues the upload for a case that stopped part-way through.
+        ///
+        /// Nothing about the case is rewritten. The studies and series already recorded stay
+        /// exactly as they are, and the processor skips every series carrying an UploadedAt,
+        /// so a retry resumes at the first series that never made it instead of sending the
+        /// whole case again. The same holds on the Radiopaedia side: RadiopaediaCaseId and
+        /// RadiopaediaStudyId are reused rather than recreated, so a retry cannot leave a
+        /// duplicate case or study behind.
+        /// </summary>
+        /// <returns>How many series are still waiting to be uploaded.</returns>
+        public async Task<int> RequeueCaseUploadAsync(Guid caseId)
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            using var trans = conn.BeginTransaction();
+
+            try
+            {
+                // Same guard as an append: two uploads for one case share scratch folders and
+                // delete each other's staged files.
+                var activeUploads = await conn.ExecuteScalarAsync<int>(@"
+                    SELECT COUNT(1) FROM DicomJobs
+                    WHERE Type = @Upload
+                      AND ResourceId = @CaseId
+                      AND Status IN (@Pending, @InProgress)",
+                    new
+                    {
+                        Upload = JobType.Upload,
+                        CaseId = caseId,
+                        Pending = JobStatus.Pending,
+                        InProgress = JobStatus.InProgress
+                    }, trans);
+
+                if (activeUploads > 0)
+                    throw new DuplicateUploadJobException(caseId);
+
+                var pendingSeries = await conn.ExecuteScalarAsync<int>(@"
+                    SELECT COUNT(1)
+                    FROM DraftCaseSeries se
+                    JOIN DraftCaseStudies st ON st.Id = se.DraftCaseStudyId
+                    WHERE st.DraftCaseId = @CaseId AND se.UploadedAt IS NULL",
+                    new { CaseId = caseId }, trans);
+
+                // The job row carries a study only for logging and for the C-MOVE node name,
+                // so prefer a study that still has something to send.
+                var primaryStudy = await conn.QueryFirstOrDefaultAsync<JobStudySeed>(@"
+                    SELECT st.StudyInstanceUid, st.RemoteNodeName
+                    FROM DraftCaseStudies st
+                    LEFT JOIN DraftCaseSeries se
+                           ON se.DraftCaseStudyId = st.Id AND se.UploadedAt IS NULL
+                    WHERE st.DraftCaseId = @CaseId
+                    ORDER BY (se.Id IS NULL), st.Id
+                    LIMIT 1",
+                    new { CaseId = caseId }, trans);
+
+                await conn.ExecuteAsync(
+                    "UPDATE DraftCases SET Status = 'Queued', ErrorMessage = NULL WHERE Id = @Id",
+                    new { Id = caseId }, trans);
+
+                await conn.ExecuteAsync(@"
+                    INSERT INTO DicomJobs (
+                        Id, StudyInstanceUid, SeriesInstanceUid, RemoteAeTitle,
+                        Type, Status, Priority, CreatedAt, ResourceId
+                    ) VALUES (
+                        @Id, @StudyUid, NULL, @RemoteNode,
+                        @Type, @Status, @Priority, @CreatedAt, @ResourceId
+                    )",
+                    new
+                    {
+                        Id = Guid.NewGuid(),
+                        StudyUid = primaryStudy?.StudyInstanceUid ?? "UNKNOWN",
+                        RemoteNode = primaryStudy?.RemoteNodeName ?? "UNKNOWN",
+                        Type = JobType.Upload,
+                        Status = JobStatus.Pending,
+                        Priority = 5,
+                        CreatedAt = DateTime.UtcNow,
+                        ResourceId = caseId
+                    }, trans);
+
+                trans.Commit();
+                return pendingSeries;
+            }
+            catch
+            {
+                trans.Rollback();
+                throw;
+            }
+        }
+
         public async Task MarkSeriesUploadedAsync(long seriesRowId)
         {
             using var conn = GetConnection();
@@ -851,6 +941,16 @@ namespace RadiopaediaConnect.Data
 
             return draft;
         }
+    }
+
+    /// <summary>
+    /// The study details an upload job row needs. Only ever read back into a job insert,
+    /// so it deliberately carries nothing else.
+    /// </summary>
+    internal class JobStudySeed
+    {
+        public string? StudyInstanceUid { get; set; }
+        public string? RemoteNodeName { get; set; }
     }
 
     /// <summary>

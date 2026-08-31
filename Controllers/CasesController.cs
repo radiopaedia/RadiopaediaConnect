@@ -379,6 +379,120 @@ namespace RadiopaediaConnect.Controllers
             }
         }
 
+        /// <summary>
+        /// Re-queue the upload for one of the caller's own cases that failed part-way through.
+        /// </summary>
+        [HttpPost("{caseId:guid}/retry")]
+        public async Task<IActionResult> RetryCase(Guid caseId)
+        {
+            var username = User.FindFirst("urn:radiopaedia:username")?.Value;
+
+            if (string.IsNullOrEmpty(username))
+            {
+                return Unauthorized("User session invalid. Please log in again.");
+            }
+
+            var draft = await _repository.GetDraftCaseAsync(caseId);
+            if (draft == null || !string.Equals(draft.Username, username, StringComparison.OrdinalIgnoreCase))
+                return NotFound("Case not found.");
+
+            return await RequeueFailedCaseAsync(draft, $"user {username}");
+        }
+
+        // Admin-session guarded (not Radiopaedia login): admins may not be Radiopaedia users.
+        // The upload still runs as the case owner, since only their token can reach their case.
+        [HttpPost("{caseId:guid}/retry/admin")]
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+        public async Task<IActionResult> RetryCaseAdmin(Guid caseId)
+        {
+            if (!AuthorizeAdmin(_sessionService)) return Unauthorized(new { message = "Invalid admin session." });
+
+            var draft = await _repository.GetDraftCaseAsync(caseId);
+            if (draft == null) return NotFound("Case not found.");
+
+            return await RequeueFailedCaseAsync(draft, "an admin");
+        }
+
+        /// <summary>
+        /// Shared body of the two retry endpoints. Everything past the ownership check is the
+        /// same for a user and an admin, including whose Radiopaedia account the upload uses.
+        ///
+        /// A retry is safe to press: the pipeline reuses the Radiopaedia case and study IDs it
+        /// already recorded and skips every series already marked uploaded, so it resumes where
+        /// the run stopped rather than duplicating anything.
+        /// </summary>
+        private async Task<IActionResult> RequeueFailedCaseAsync(DraftCase draft, string requestedBy)
+        {
+            // "Processing" is accepted alongside "Failed" because a case whose process died
+            // mid-upload can be left sitting there. The duplicate-job guard below is what
+            // actually stops a live upload being retried out from under itself.
+            if (draft.Status != "Failed" && draft.Status != "Processing")
+            {
+                return BadRequest(new
+                {
+                    message = $"Only a failed upload can be retried. This case is {draft.Status}."
+                });
+            }
+
+            // Radiopaedia only accepts imaging while a case is a draft, and it may have been
+            // published or deleted since the upload failed. Checking here turns a long retry
+            // that dies deep in the pipeline into an immediate, readable refusal.
+            if (!string.IsNullOrEmpty(draft.RadiopaediaCaseId))
+            {
+                try
+                {
+                    await _reconciliation.EnsureAcceptsNewImagingAsync(
+                        draft.Username, draft.RadiopaediaCaseId, draft.Id, forceRefresh: true);
+                }
+                catch (CaseNotEditableException ex)
+                {
+                    _logger.LogInformation("Retry of case {CaseId} refused: {Message}", draft.Id, ex.Message);
+                    return Conflict(new { message = ex.Message, remoteStatus = ex.RemoteStatus });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Could not verify the Radiopaedia status of case {CaseId}", draft.Id);
+                    return StatusCode(502, new
+                    {
+                        message = "Could not check the case status with Radiopaedia. Please try again shortly."
+                    });
+                }
+            }
+
+            try
+            {
+                var pendingSeries = await _repository.RequeueCaseUploadAsync(draft.Id);
+
+                _logger.LogInformation(
+                    "Case {CaseId} re-queued by {RequestedBy}; {PendingSeries} series left to upload.",
+                    draft.Id, requestedBy, pendingSeries);
+
+                return Ok(new
+                {
+                    Success = true,
+                    CaseId = draft.Id,
+                    PendingSeries = pendingSeries,
+                    Message = pendingSeries > 0
+                        ? $"Upload re-queued. {pendingSeries} series still to send."
+                        : "Upload re-queued. All imaging was already sent, so only the finishing step is left."
+                });
+            }
+            catch (DuplicateUploadJobException)
+            {
+                // Expected when the button is pressed twice, or by two people at once.
+                _logger.LogInformation("Retry of case {CaseId} refused: an upload is already queued.", draft.Id);
+                return Conflict(new
+                {
+                    message = "This case already has an upload queued or running. Wait for it to finish."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to re-queue case {CaseId}.", draft.Id);
+                return StatusCode(500, "Internal server error while re-queueing the case.");
+            }
+        }
+
         [HttpPost("submit")]
         public async Task<IActionResult> SubmitCase([FromBody] SubmitCaseDto request)
         {

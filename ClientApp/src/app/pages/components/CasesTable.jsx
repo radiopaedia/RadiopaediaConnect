@@ -72,6 +72,9 @@ const formatDate = (dateString, dateOnly = false) => {
  *   loadingMessage – override the loading text
  *   onAddToCase    – optional (caseObj) => void; shows an "Add imaging" action on completed cases
  *                    that are still drafts on Radiopaedia (or whose remote status is unknown)
+ *
+ * Retrying a failed upload is handled here rather than by the caller, so both the user and the
+ * admin view get it from the one place; adminMode only picks which endpoint is used.
  */
 const CasesTable = ({
     cases,
@@ -92,6 +95,33 @@ const CasesTable = ({
 
     const [logsOpen, setLogsOpen] = useState(false);
     const [logsCase, setLogsCase] = useState(null);
+
+    const [retryingId, setRetryingId] = useState(null);
+    const [retryNotice, setRetryNotice] = useState(null);
+
+    // Re-queues a failed upload. The server resumes at the first series that never made it,
+    // so this only sends what is missing rather than the whole case again.
+    const handleRetry = async (c) => {
+        setRetryingId(c.id);
+        setRetryNotice(null);
+        try {
+            const url = adminMode
+                ? `/api/cases/${c.id}/retry/admin`
+                : `/api/cases/${c.id}/retry`;
+            const res = await fetch(url, { method: 'POST' });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.message || 'Could not re-queue this case.');
+            setRetryNotice({
+                type: 'success',
+                text: `${c.title || 'Case'}: ${data?.message || 'Upload re-queued.'}`,
+            });
+            onRefresh?.();
+        } catch (err) {
+            setRetryNotice({ type: 'error', text: `${c.title || 'Case'}: ${err.message}` });
+        } finally {
+            setRetryingId(null);
+        }
+    };
 
     const completedCount = cases.filter(c => c.status === 'Completed').length;
     const pendingCount  = cases.filter(c => c.status === 'Queued' || c.status === 'Processing').length;
@@ -206,6 +236,22 @@ const CasesTable = ({
                 </div>
             )}
 
+            {/* Outcome of the last retry */}
+            {retryNotice && (
+                <div className={`rounded-lg border p-3 mb-4 flex items-start gap-2 text-sm ${
+                    retryNotice.type === 'success'
+                        ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                        : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+                }`}>
+                    <span className="flex-1">{retryNotice.text}</span>
+                    <button onClick={() => setRetryNotice(null)} className="shrink-0 opacity-60 hover:opacity-100">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            )}
+
             {/* Error */}
             {error && (
                 <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
@@ -274,6 +320,13 @@ const CasesTable = ({
                                     // Cases that have never been reconciled keep the button —
                                     // the server rechecks with Radiopaedia before anything uploads.
                                     const canAddImaging = hasLink && (!c.remoteStatus || c.remoteStatus === 'draft');
+                                    // A case that never reached Radiopaedia has nothing to check
+                                    // against; one that did can only take the rest of its imaging
+                                    // while it is still a draft there.
+                                    const remoteBlocksRetry =
+                                        !!c.radiopaediaCaseId && !!c.remoteStatus && c.remoteStatus !== 'draft';
+                                    const showRetry = c.status === 'Failed';
+                                    const retrying = retryingId === c.id;
                                     return (
                                         <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                                             {showUserColumn && (
@@ -342,6 +395,22 @@ const CasesTable = ({
                                                             </svg>
                                                             Radiopaedia
                                                         </a>
+                                                    )}
+                                                    {showRetry && (
+                                                        <button
+                                                            onClick={() => handleRetry(c)}
+                                                            disabled={retrying || remoteBlocksRetry}
+                                                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-amber-600 text-white text-xs font-medium rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                                            title={remoteBlocksRetry
+                                                                ? (REMOTE_STATUS_CONFIG[c.remoteStatus]?.hint
+                                                                    ?? 'This case can no longer accept imaging on Radiopaedia.')
+                                                                : 'Re-queue this upload. Only the series that never made it are sent again.'}
+                                                        >
+                                                            <svg className={`w-3.5 h-3.5 ${retrying ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                            </svg>
+                                                            {retrying ? 'Retrying...' : 'Retry Upload'}
+                                                        </button>
                                                     )}
                                                     {onAddToCase && canAddImaging && (
                                                         <button

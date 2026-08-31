@@ -154,35 +154,51 @@ namespace RadiopaediaConnect.Data
             conn.Execute(createAppLogsSql);
             EnsureColumnExists(conn, "AppLogs", "CaseId", "TEXT");
 
-            FailOrphanedJobs(conn);
+            FailOrphanedWork(conn);
         }
 
         /// <summary>
-        /// Marks any job still flagged as running at startup as failed. Nothing survives a
-        /// process restart, so such a row is always a leftover. Left alone they would hold a
-        /// slot in the concurrency budget forever, and now that a running upload blocks further
-        /// uploads for the same case, one leftover would stop that case being uploaded again.
+        /// Marks any job still flagged as running at startup as failed, and any case still
+        /// flagged as processing along with it. Nothing survives a process restart, so both
+        /// are always leftovers. Left alone the job would hold a slot in the concurrency
+        /// budget forever, and now that a running upload blocks further uploads for the same
+        /// case, one leftover would stop that case being uploaded again.
         ///
         /// They are failed rather than requeued so a half-finished upload is never silently
-        /// repeated: the case shows as failed and the user decides whether to retry.
+        /// repeated: the case shows as failed and the user decides whether to retry it. The
+        /// case row matters as much as the job row here: retry only offers itself on a failed
+        /// case, so a case left sitting in "Processing" would be stranded with no way back.
         /// </summary>
-        private static void FailOrphanedJobs(SqliteConnection conn)
+        private static void FailOrphanedWork(SqliteConnection conn)
         {
-            const string sql = @"
+            const string jobSql = @"
                 UPDATE DicomJobs
                 SET Status = @Failed,
                     ErrorMessage = COALESCE(ErrorMessage, 'Interrupted by a service restart.'),
                     CompletedAt = @Now
                 WHERE Status = @InProgress";
 
-            int affected = conn.Execute(sql, new
+            int jobs = conn.Execute(jobSql, new
             {
                 Failed = JobStatus.Failed,
                 InProgress = JobStatus.InProgress,
                 Now = DateTime.UtcNow
             });
-            if (affected > 0)
-                Console.WriteLine($"[DB] Failed {affected} job(s) left running by a previous process.");
+            if (jobs > 0)
+                Console.WriteLine($"[DB] Failed {jobs} job(s) left running by a previous process.");
+
+            // "Queued" is left alone: that job is still pending and will be picked up normally.
+            const string caseSql = @"
+                UPDATE DraftCases
+                SET Status = 'Failed',
+                    ErrorMessage = COALESCE(
+                        ErrorMessage,
+                        'Interrupted by a service restart. Retry the upload to resume it.')
+                WHERE Status = 'Processing'";
+
+            int cases = conn.Execute(caseSql);
+            if (cases > 0)
+                Console.WriteLine($"[DB] Failed {cases} case(s) left processing by a previous process.");
         }
 
         private static void EnsureColumnExists(SqliteConnection conn, string tableName, string columnName, string columnDef)
